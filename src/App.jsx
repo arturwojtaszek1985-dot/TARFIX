@@ -14,8 +14,19 @@ const INITIAL_USERS = [
 const DEFAULT_UNITS = [
   { value: "szt", label: "sztuka" },
   { value: "kg", label: "kg" },
+  { value: "g", label: "gram" },
+  { value: "t", label: "tona" },
   { value: "tys", label: "tysiąc" },
   { value: "opak", label: "opakowanie" },
+  { value: "kpl", label: "komplet" },
+  { value: "para", label: "para" },
+  { value: "m", label: "metr" },
+  { value: "m2", label: "metr kwadratowy" },
+  { value: "m3", label: "metr sześcienny" },
+  { value: "l", label: "litr" },
+  { value: "pal", label: "paleta" },
+  { value: "rolka", label: "rolka" },
+  { value: "ark", label: "arkusz" },
 ];
 
 // Mapa typowych skrótów jednostek z systemów WF-Mag/innych na nasze symbole.
@@ -35,6 +46,8 @@ const UNIT_ALIASES = {
   "m3": "m3", "m³": "m3", "metr3": "m3",
   "l": "l", "litr": "l", "litry": "l",
   "pal": "pal", "paleta": "pal", "palety": "pal",
+  "rolka": "rolka", "rolki": "rolka", "rol": "rolka",
+  "ark": "ark", "arkusz": "ark", "arkusze": "ark",
 };
 
 const INITIAL_PRODUCTS = [
@@ -227,7 +240,8 @@ const css = `
   .products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px;margin-top:20px}
   .product-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);border:1px solid var(--border);overflow:hidden;transition:box-shadow .2s,transform .2s;display:flex;flex-direction:column}
   .product-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px);border-color:var(--primary-mid)}
-  .product-emoji{font-size:3rem;text-align:center;padding:20px 0 14px;background:#f2fbf7;border-bottom:1px solid #cdeee0;overflow:hidden}
+  .product-emoji{font-size:3rem;text-align:center;padding:20px 0 14px;background:#f2fbf7;border-bottom:1px solid #cdeee0;overflow:hidden;transition:opacity .15s}
+  .product-emoji.product-link:hover{opacity:.85}
   .product-photo{width:100%;height:120px;object-fit:cover;display:block}
   .product-photo-thumb{width:32px;height:32px;object-fit:cover;border-radius:6px;margin-right:7px;vertical-align:middle}
   .cart-item-photo{width:38px;height:38px;object-fit:cover;border-radius:6px}
@@ -305,6 +319,9 @@ const css = `
   .cart-badge{background:var(--primary);color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;margin-left:2px;padding:0 4px}
   .tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:.73rem;font-weight:500;background:#e3f7ef;color:#17956f}
   .tag-sub{background:#e0f2fe;color:#0369a1}
+  .tag-subsub{background:#f3e8ff;color:#7c3aed;font-size:.72rem}
+  .subcat-tree-node{margin-bottom:10px}
+  .subcat-children{margin-left:18px;margin-bottom:6px}
 
   .category-block{border:1px solid var(--border);border-radius:8px;overflow:hidden}
   .category-block-header{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fafafa;cursor:pointer;transition:background .15s}
@@ -399,6 +416,15 @@ const css = `
   .specs-table td{padding:10px 12px}
   .specs-table td:first-child{font-weight:600;color:#374151;width:40%;background:#f8fafc}
   .spec-row-editor{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+
+  /* ── Strona Kontakt ── */
+  .contact-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  @media (max-width: 760px){.contact-grid{grid-template-columns:1fr}}
+  .contact-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f0f0f0;font-size:.95rem}
+  .contact-row:last-of-type{border-bottom:none}
+  .contact-row a{color:var(--primary);text-decoration:none}
+  .contact-row a:hover{text-decoration:underline}
+  .contact-map{width:100%;height:340px;border:none;display:block}
   .wfmag-badge{background:linear-gradient(90deg,#17956f,#1cb88a);color:#fff;border-radius:6px;padding:3px 9px;font-size:.72rem;font-weight:700;letter-spacing:.5px}
 
   /* ── Płatności ── */
@@ -437,6 +463,15 @@ export default function App() {
     { name: "Książki", subcategories: [] },
   ]);
   const [dbReady, setDbReady] = useState(false);
+  const [contactInfo, setContactInfo] = useState({
+    companyName: "TARFIX",
+    address: "ul. Przykładowa 1, 00-001 Warszawa",
+    phone: "+48 123 456 789",
+    email: "kontakt@tarfix.pl",
+    hours: "Pon–Pt: 8:00–16:00",
+    mapEmbedUrl: "",
+    extraNote: "Zapraszamy do kontaktu w sprawie zamówień, reklamacji oraz współpracy.",
+  });
   const [dbError, setDbError] = useState(null);
 
   // Wczytanie produktów i kategorii z bazy Supabase przy starcie aplikacji.
@@ -468,6 +503,14 @@ export default function App() {
         console.error("Nie udało się połączyć z bazą danych:", err);
         setDbError(err.message || "Błąd połączenia z bazą danych");
         // Zostajemy na danych startowych z kodu — sklep nadal działa
+      }
+      // Dane kontaktowe wczytujemy osobno — jeśli tabela "settings" jeszcze
+      // nie istnieje w bazie, po prostu zostają domyślne wartości z kodu.
+      try {
+        const dbContact = await api.fetchContactInfo();
+        if (!cancelled && dbContact) setContactInfo(prev => ({ ...prev, ...dbContact }));
+      } catch (err) {
+        console.warn("Brak zapisanych danych kontaktowych w bazie — używam domyślnych:", err.message);
       }
     })();
     return () => { cancelled = true; };
@@ -557,6 +600,7 @@ export default function App() {
             <div className="navbar-brand"><img src={LOGO_TARFIX} alt="TARFIX" style={{ height: 34, verticalAlign: "middle" }} /></div>
             <div className="nav-left">
               <button className={`btn btn-ghost ${page === "shop" ? "active" : ""}`} onClick={() => setPage("shop")}>🏪 Sklep</button>
+              <button className={`btn btn-ghost ${page === "contact" ? "active" : ""}`} onClick={() => setPage("contact")}>✉️ Kontakt</button>
               {isAdmin && <>
                 <button className={`btn btn-ghost ${page === "csv" ? "active" : ""}`} onClick={() => setPage("csv")}>📥 CSV</button>
                 <button className={`btn btn-ghost ${page === "products" ? "active" : ""}`} onClick={() => setPage("products")}>📦 Produkty</button>
@@ -600,6 +644,7 @@ export default function App() {
 
           {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} />}
           {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} />}
+          {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
           {page === "users" && isAdmin && <AdminUsers users={users} setUsers={setUsers} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
@@ -1121,7 +1166,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                 const dp = p.price * (1 - discount / 100);
                 return (
                   <div key={p.id} className="product-card">
-                    <div className="product-emoji">{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
+                    <div className="product-emoji product-link" onClick={() => onOpenDetail(p.id)}>{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
                     <div className="product-body">
                       <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a></div>
                       <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
@@ -1230,6 +1275,84 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack }) {
             </>
           )}
         </div>
+      </div>
+    </>
+  );
+}
+
+
+// ── STRONA KONTAKT ────────────────────────────────────────────────────────────
+function ContactPage({ contactInfo, setContactInfo, isAdmin, showAlert }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(contactInfo);
+
+  useEffect(() => { setForm(contactInfo); }, [contactInfo]);
+
+  const save = async () => {
+    try {
+      await api.saveContactInfo(form);
+      setContactInfo(form);
+      setEditing(false);
+      showAlert("Dane kontaktowe zapisane");
+    } catch (err) {
+      showAlert("Nie udało się zapisać do bazy danych: " + err.message, "danger");
+    }
+  };
+
+  const cancel = () => { setForm(contactInfo); setEditing(false); };
+
+  if (editing) {
+    return (
+      <>
+        <div className="page-header">
+          <h1 className="page-title">✉️ Edytuj dane kontaktowe</h1>
+        </div>
+        <div className="card" style={{ maxWidth: 560 }}>
+          <div className="form-group"><label className="form-label">Nazwa firmy</label>
+            <input className="form-input" value={form.companyName} onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))} /></div>
+          <div className="form-group"><label className="form-label">Adres</label>
+            <input className="form-input" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div>
+          <div className="flex gap-3">
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">Telefon</label>
+              <input className="form-input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">E-mail</label>
+              <input className="form-input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+          </div>
+          <div className="form-group"><label className="form-label">Godziny otwarcia</label>
+            <input className="form-input" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} /></div>
+          <div className="form-group"><label className="form-label">Link do mapy (osadzony iframe, opcjonalnie)</label>
+            <input className="form-input" placeholder="https://www.google.com/maps/embed?..." value={form.mapEmbedUrl} onChange={e => setForm(f => ({ ...f, mapEmbedUrl: e.target.value }))} /></div>
+          <div className="form-group"><label className="form-label">Dodatkowa notatka</label>
+            <input className="form-input" value={form.extraNote} onChange={e => setForm(f => ({ ...f, extraNote: e.target.value }))} /></div>
+          <div className="flex gap-3 mt-4">
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>💾 Zapisz</button>
+            <button className="btn btn-secondary" onClick={cancel}>Anuluj</button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-header">
+        <h1 className="page-title">✉️ Kontakt</h1>
+        {isAdmin && <button className="btn btn-secondary" onClick={() => setEditing(true)}>✏️ Edytuj dane kontaktowe</button>}
+      </div>
+      <div className="contact-grid">
+        <div className="card">
+          <h2 className="card-title">{contactInfo.companyName}</h2>
+          <div className="contact-row">📍 <span>{contactInfo.address}</span></div>
+          <div className="contact-row">📞 <a href={`tel:${contactInfo.phone.replace(/\s/g, "")}`}>{contactInfo.phone}</a></div>
+          <div className="contact-row">✉️ <a href={`mailto:${contactInfo.email}`}>{contactInfo.email}</a></div>
+          <div className="contact-row">🕒 <span>{contactInfo.hours}</span></div>
+          {contactInfo.extraNote && <p className="text-muted mt-4" style={{ lineHeight: 1.6 }}>{contactInfo.extraNote}</p>}
+        </div>
+        {contactInfo.mapEmbedUrl && (
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <iframe src={contactInfo.mapEmbedUrl} className="contact-map" loading="lazy" title="Mapa lokalizacji"></iframe>
+          </div>
+        )}
       </div>
     </>
   );
@@ -1627,6 +1750,8 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
   const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "" });
   const [newCat, setNewCat] = useState("");
+  const [newUnitValue, setNewUnitValue] = useState("");
+  const [newUnitLabel, setNewUnitLabel] = useState("");
   const [newSub, setNewSub] = useState({});
   const [catFilter, setCatFilter] = useState(categories[0]?.name || "");
   const emojis = ["📦", "💻", "🎧", "📱", "👕", "👟", "🍕", "☕", "📘", "🎒", "⌚", "🏋️", "🎮", "🌿"];
@@ -1697,32 +1822,72 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     }
   };
 
-  const addSubcategory = async (catName) => {
-    const sub = (newSub[catName] || "").trim();
-    if (!sub) return;
+  const addSubcategory = async (catName, parentSub = null) => {
+    const inputKey = parentSub ? `${catName}::${parentSub}` : catName;
+    const raw = (newSub[inputKey] || "").trim();
+    if (!raw) return;
+    const sub = parentSub ? `${parentSub} / ${raw}` : raw;
     const cat = categories.find(c => c.name === catName);
     if (cat.subcategories.some(s => s.toLowerCase() === sub.toLowerCase())) return showAlert("Taka podkategoria już istnieje", "danger");
     try {
       if (cat?.id) await api.addSubcategory(cat.id, cat.subcategories, sub);
       setCategories(prev => prev.map(c => c.name === catName ? { ...c, subcategories: [...c.subcategories, sub] } : c));
-      setNewSub(prev => ({ ...prev, [catName]: "" }));
-      showAlert(`Podkategoria "${sub}" dodana do "${catName}"`);
+      setNewSub(prev => ({ ...prev, [inputKey]: "" }));
+      showAlert(parentSub ? `Podkategoria "${raw}" dodana do "${parentSub}"` : `Podkategoria "${sub}" dodana do "${catName}"`);
     } catch (err) {
       showAlert("Nie udało się zapisać podkategorii: " + err.message, "danger");
     }
   };
 
   const removeSubcategory = async (catName, sub) => {
-    const inUse = products.filter(p => p.category === catName && p.subcategory === sub).length;
-    if (inUse > 0) return showAlert(`Nie można usunąć — ${inUse} produktów ma tę podkategorię`, "danger");
+    // Usunięcie podkategorii usuwa też wszystkie jej dzieci (np. "Wkręty" usuwa "Wkręty / Do drewna")
     const cat = categories.find(c => c.name === catName);
+    const toRemove = cat.subcategories.filter(s => s === sub || s.startsWith(sub + " / "));
+    const inUse = products.filter(p => p.category === catName && toRemove.includes(p.subcategory)).length;
+    if (inUse > 0) return showAlert(`Nie można usunąć — ${inUse} produktów ma tę podkategorię (lub jej pod-podkategorię)`, "danger");
     try {
-      if (cat?.id) await api.removeSubcategory(cat.id, cat.subcategories, sub);
-      setCategories(prev => prev.map(c => c.name === catName ? { ...c, subcategories: c.subcategories.filter(s => s !== sub) } : c));
+      const remaining = cat.subcategories.filter(s => !toRemove.includes(s));
+      if (cat?.id) {
+        for (const s of toRemove) await api.removeSubcategory(cat.id, cat.subcategories, s);
+      }
+      setCategories(prev => prev.map(c => c.name === catName ? { ...c, subcategories: remaining } : c));
       showAlert(`Podkategoria "${sub}" usunięta`);
     } catch (err) {
       showAlert("Nie udało się usunąć podkategorii: " + err.message, "danger");
     }
+  };
+
+  // Budowanie drzewa podkategorii z płaskiej listy stringów typu "Rodzic / Dziecko"
+  const buildSubcatTree = (subcats) => {
+    const tree = {};
+    subcats.forEach(s => {
+      const parts = s.split(" / ");
+      if (parts.length === 1) {
+        tree[s] = tree[s] || { fullPath: s, children: {} };
+      } else {
+        const [parent, child] = parts;
+        tree[parent] = tree[parent] || { fullPath: parent, children: {} };
+        tree[parent].children[child] = { fullPath: s };
+      }
+    });
+    return tree;
+  };
+
+  const addUnit = () => {
+    const value = newUnitValue.trim().toLowerCase();
+    const label = newUnitLabel.trim();
+    if (!value || !label) return showAlert("Podaj symbol i nazwę jednostki", "danger");
+    if (units.some(u => u.value === value)) return showAlert("Jednostka z tym symbolem już istnieje", "danger");
+    setUnits(prev => [...prev, { value, label }]);
+    setNewUnitValue(""); setNewUnitLabel("");
+    showAlert(`Jednostka "${label}" dodana`);
+  };
+
+  const removeUnit = (value) => {
+    const inUse = products.filter(p => p.unit === value).length;
+    if (inUse > 0) return showAlert(`Nie można usunąć — ${inUse} produktów używa tej jednostki`, "danger");
+    setUnits(prev => prev.filter(u => u.value !== value));
+    showAlert("Jednostka usunięta");
   };
 
   return (
@@ -1855,9 +2020,12 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
               <div className="flex gap-3">
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Jednostka miary</label>
-                  <select className="form-select" value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}>
-                    {units.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
-                  </select>
+                  <div className="flex gap-2">
+                    <select className="form-select" style={{ flex: 1 }} value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}>
+                      {units.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                    </select>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setModal("units")} title="Zarządzaj jednostkami">📏 +</button>
+                  </div>
                 </div>
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Waga (kg)</label><input className="form-input" type="number" step="0.01" min="0" placeholder="np. 1.5" value={form.weight} onChange={e => setForm(f => ({ ...f, weight: e.target.value }))} /></div>
               </div>
@@ -1891,6 +2059,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                   {categories.map(cat => {
                     const count = products.filter(p => p.category === cat.name).length;
                     const isOpen = catFilter === cat.name;
+                    const tree = buildSubcatTree(cat.subcategories);
                     return (
                       <div key={cat.name} className="category-block">
                         <div className="category-block-header" onClick={() => setCatFilter(isOpen ? "" : cat.name)}>
@@ -1900,18 +2069,35 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                         </div>
                         {isOpen && (
                           <div className="category-block-body">
-                            {cat.subcategories.length === 0
+                            {Object.keys(tree).length === 0
                               ? <p className="text-sm text-muted" style={{ marginBottom: 10 }}>Brak podkategorii.</p>
-                              : <div className="flex gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-                                {cat.subcategories.map(sub => {
-                                  const subCount = products.filter(p => p.category === cat.name && p.subcategory === sub).length;
-                                  return (
-                                    <span key={sub} className="tag tag-sub" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 6px 5px 10px" }}>
-                                      {sub} <span className="text-muted">({subCount})</span>
-                                      <button onClick={() => removeSubcategory(cat.name, sub)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, padding: "0 3px" }} title="Usuń podkategorię">✕</button>
-                                    </span>
-                                  );
-                                })}
+                              : <div style={{ marginBottom: 12 }}>
+                                {Object.values(tree).map(node => (
+                                  <div key={node.fullPath} className="subcat-tree-node">
+                                    <div className="flex gap-2 items-center" style={{ marginBottom: 6 }}>
+                                      <span className="tag tag-sub" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 6px 5px 10px" }}>
+                                        {node.fullPath} <span className="text-muted">({products.filter(p => p.category === cat.name && p.subcategory === node.fullPath).length})</span>
+                                        <button onClick={() => removeSubcategory(cat.name, node.fullPath)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, padding: "0 3px" }} title="Usuń podkategorię (i jej dzieci)">✕</button>
+                                      </span>
+                                    </div>
+                                    {Object.values(node.children).length > 0 && (
+                                      <div className="subcat-children">
+                                        {Object.values(node.children).map(child => (
+                                          <span key={child.fullPath} className="tag tag-subsub" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 10px", marginRight: 6, marginBottom: 6 }}>
+                                            ↳ {child.fullPath.split(" / ")[1]} <span className="text-muted">({products.filter(p => p.category === cat.name && p.subcategory === child.fullPath).length})</span>
+                                            <button onClick={() => removeSubcategory(cat.name, child.fullPath)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, padding: "0 3px" }} title="Usuń pod-podkategorię">✕</button>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <div className="flex gap-2 mb-3" style={{ marginLeft: 18 }}>
+                                      <input className="form-input" style={{ fontSize: ".8rem" }} placeholder={`Nowa pod-podkategoria w "${node.fullPath}"`}
+                                        value={newSub[`${cat.name}::${node.fullPath}`] || ""} onChange={e => setNewSub(prev => ({ ...prev, [`${cat.name}::${node.fullPath}`]: e.target.value }))}
+                                        onKeyDown={e => e.key === "Enter" && addSubcategory(cat.name, node.fullPath)} />
+                                      <button className="btn btn-secondary btn-sm" onClick={() => addSubcategory(cat.name, node.fullPath)}>+ Dodaj</button>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>}
                             <div className="flex gap-2">
                               <input className="form-input" style={{ fontSize: ".82rem" }} placeholder={`Nowa podkategoria w "${cat.name}"`}
@@ -1926,6 +2112,40 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                   })}
                 </div>}
 
+              <div className="flex gap-3 mt-4">
+                <button className="btn btn-primary w-full" onClick={() => setModal(null)}>Zamknij</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === "units" && (
+        <div className="modal-bg">
+          <div className="modal" style={{ maxWidth: 520 }}>
+            <div className="modal-header"><h2 className="modal-title">📏 Zarządzanie jednostkami miary</h2><button className="close-btn" onClick={() => setModal(null)}>✕</button></div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Nowa jednostka</label>
+                <div className="flex gap-2">
+                  <input className="form-input" placeholder="Symbol (np. krt)" style={{ flex: 1 }} value={newUnitValue} onChange={e => setNewUnitValue(e.target.value)} onKeyDown={e => e.key === "Enter" && addUnit()} />
+                  <input className="form-input" placeholder="Nazwa (np. karton)" style={{ flex: 1 }} value={newUnitLabel} onChange={e => setNewUnitLabel(e.target.value)} onKeyDown={e => e.key === "Enter" && addUnit()} />
+                  <button className="btn btn-primary btn-sm" onClick={addUnit}>+ Dodaj</button>
+                </div>
+              </div>
+              <div className="divider"></div>
+              <p className="form-label mb-3">Istniejące jednostki:</p>
+              <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+                {units.map(u => {
+                  const count = products.filter(p => p.unit === u.value).length;
+                  return (
+                    <span key={u.value} className="tag" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 6px 6px 12px", fontSize: ".82rem" }}>
+                      {u.label} <span className="text-muted">({u.value}) · {count}</span>
+                      <button onClick={() => removeUnit(u.value)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, fontSize: ".9rem", padding: "0 4px" }} title="Usuń jednostkę">✕</button>
+                    </span>
+                  );
+                })}
+              </div>
               <div className="flex gap-3 mt-4">
                 <button className="btn btn-primary w-full" onClick={() => setModal(null)}>Zamknij</button>
               </div>

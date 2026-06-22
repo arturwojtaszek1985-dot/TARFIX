@@ -143,3 +143,21 @@ export async function fetchOrders(userId, isAdmin) {
   if (error) throw error;
   return data;
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// USTAWIENIA SKLEPU (np. dane kontaktowe) — przechowywane jako pary klucz/wartość
+// ════════════════════════════════════════════════════════════════════════
+
+export async function fetchContactInfo() {
+  const { data, error } = await supabase.from("settings").select("value").eq("key", "contact_info").single();
+  if (error) throw error;
+  return data?.value || null;
+}
+
+export async function saveContactInfo(contactInfo) {
+  const { error } = await supabase
+    .from("settings")
+    .upsert({ key: "contact_info", value: contactInfo }, { onConflict: "key" });
+  if (error) throw error;
+}
+
