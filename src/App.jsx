@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, Fragment } from "react";
 import Papa from "papaparse";
 import * as api from "./api";
 
@@ -197,6 +197,25 @@ const css = `
   .tab.active{background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(28,184,138,.35);border-color:var(--primary)}
 
   .subcat-tabs{margin-top:-12px;margin-bottom:20px;gap:6px}
+
+  /* ── Sklep: panel kategorii po lewej ── */
+  .shop-layout{display:grid;grid-template-columns:220px 1fr;gap:24px;align-items:start}
+  @media (max-width: 760px){.shop-layout{grid-template-columns:1fr}}
+  .category-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:sticky;top:78px}
+  .category-sidebar-title{padding:12px 14px;font-weight:700;font-size:.9rem;background:#f8fafc;border-bottom:1px solid var(--border)}
+  .category-table{width:100%;border-collapse:collapse;font-size:.85rem}
+  .category-row{cursor:pointer;transition:background .15s}
+  .category-row td{padding:10px 14px;border-bottom:1px solid #f0f0f0}
+  .category-row:hover{background:#f8fafc}
+  .category-row.active{background:var(--primary-light);font-weight:700;color:var(--primary)}
+  .category-row.active td:first-child{border-left:3px solid var(--primary);padding-left:11px}
+  .subcategory-row{cursor:pointer;transition:background .15s;background:#fafbfc}
+  .subcategory-row td{padding:8px 14px 8px 26px;border-bottom:1px solid #f0f0f0;font-size:.82rem;color:var(--muted)}
+  .subcategory-row:hover{background:#f0f2f5}
+  .subcategory-row.active{background:#e0f2fe;color:#0369a1;font-weight:600}
+  .category-count{text-align:right;color:var(--muted);font-size:.78rem;font-weight:400}
+  .category-row.active .category-count{color:var(--primary)}
+  .shop-main{min-width:0}
   .tab-sub{padding:6px 14px;font-size:.8rem;border-color:#7dd3fc;color:#0369a1}
   .tab-sub:hover{background:#e0f2fe}
   .tab-sub.active{background:#0369a1;color:#fff;border-color:#0369a1;box-shadow:0 2px 8px rgba(3,105,161,.3)}
@@ -579,7 +598,7 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} />}
+          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} />}
           {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
@@ -1042,13 +1061,14 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
 }
 
 
-function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail }) {
+function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts }) {
   const selectCategory = (c) => {
     setFilterCat(c);
     setFilterSubcat("Wszystkie"); // reset podkategorii przy zmianie kategorii głównej
   };
 
   const activeSubcats = categoriesFull.find(c => c.name === filterCat)?.subcategories || [];
+  const countFor = (catName) => catName === "Wszystkie" ? allProducts.length : allProducts.filter(p => p.category === catName).length;
 
   return (
     <>
@@ -1056,52 +1076,80 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
         <h1 className="page-title">🏪 Sklep</h1>
         {discount > 0 && <span className="badge badge-green" style={{ fontSize: ".85rem", padding: "5px 12px" }}>🎉 Twój rabat: {discount}%</span>}
       </div>
-      <div className="search-bar">
-        <input className="form-input" placeholder="🔍 Szukaj..." value={searchQ} onChange={e => setSearchQ(e.target.value)} />
-        <div className="tabs" style={{ margin: 0, flex: 1 }}>
-          {categories.map(c => <button key={c} className={`tab ${filterCat === c ? "active" : ""}`} onClick={() => selectCategory(c)}>{c}</button>)}
+
+      <div className="shop-layout">
+        <aside className="category-sidebar">
+          <div className="category-sidebar-title">Kategorie</div>
+          <table className="category-table">
+            <tbody>
+              {categories.map(c => {
+                const isActive = filterCat === c;
+                const subcats = categoriesFull.find(cf => cf.name === c)?.subcategories || [];
+                return (
+                  <Fragment key={c}>
+                    <tr className={`category-row ${isActive ? "active" : ""}`} onClick={() => selectCategory(c)}>
+                      <td>{c}</td>
+                      <td className="category-count">{countFor(c)}</td>
+                    </tr>
+                    {isActive && subcats.length > 0 && subcats.map(s => (
+                      <tr key={c + "-" + s} className={`subcategory-row ${filterSubcat === s ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); setFilterSubcat(s); }}>
+                        <td>↳ {s}</td>
+                        <td className="category-count">{allProducts.filter(p => p.category === c && p.subcategory === s).length}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </aside>
+
+        <div className="shop-main">
+          <div className="search-bar">
+            <input className="form-input" placeholder="🔍 Szukaj..." value={searchQ} onChange={e => setSearchQ(e.target.value)} style={{ maxWidth: "none", flex: 1 }} />
+          </div>
+          {filterCat !== "Wszystkie" && activeSubcats.length > 0 && (
+            <div className="tabs subcat-tabs" style={{ marginTop: 0 }}>
+              <button className={`tab tab-sub ${filterSubcat === "Wszystkie" ? "active" : ""}`} onClick={() => setFilterSubcat("Wszystkie")}>Wszystkie</button>
+              {activeSubcats.map(s => <button key={s} className={`tab tab-sub ${filterSubcat === s ? "active" : ""}`} onClick={() => setFilterSubcat(s)}>{s}</button>)}
+            </div>
+          )}
+          {products.length === 0
+            ? <div className="empty-state"><div className="icon">📦</div>Brak produktów</div>
+            : <div className="products-grid">
+              {products.map(p => {
+                const dp = p.price * (1 - discount / 100);
+                return (
+                  <div key={p.id} className="product-card">
+                    <div className="product-emoji">{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
+                    <div className="product-body">
+                      <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a></div>
+                      <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
+                        <span className="tag">{p.category}</span>
+                        {p.subcategory && <span className="tag tag-sub">{p.subcategory}</span>}
+                        {p.sku && <span className="product-sku">{p.sku}</span>}
+                      </div>
+                      <div className="product-desc">{p.description}</div>
+                      <div>
+                        {discount > 0 ? <>
+                          <span className="product-price-original">{fmt(p.price)}</span>{" "}
+                          <span className="product-price">{fmt(dp)}</span>
+                          <div className="product-price-discount">Oszczędzasz {fmt(p.price - dp)}</div>
+                        </> : <span className="product-price">{fmt(p.price)}</span>}
+                      </div>
+                      <div className="text-sm text-muted">Magazyn: <strong>{p.stock}</strong> {units.find(u => u.value === p.unit)?.label || "szt."}</div>
+                    </div>
+                    <div className="product-footer">
+                      <button className="btn btn-primary w-full" onClick={() => onAdd(p)} disabled={p.stock === 0}>
+                        {p.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
         </div>
       </div>
-      {activeSubcats.length > 0 && (
-        <div className="tabs subcat-tabs">
-          <button className={`tab tab-sub ${filterSubcat === "Wszystkie" ? "active" : ""}`} onClick={() => setFilterSubcat("Wszystkie")}>Wszystkie</button>
-          {activeSubcats.map(s => <button key={s} className={`tab tab-sub ${filterSubcat === s ? "active" : ""}`} onClick={() => setFilterSubcat(s)}>{s}</button>)}
-        </div>
-      )}
-      {products.length === 0
-        ? <div className="empty-state"><div className="icon">📦</div>Brak produktów</div>
-        : <div className="products-grid">
-          {products.map(p => {
-            const dp = p.price * (1 - discount / 100);
-            return (
-              <div key={p.id} className="product-card">
-                <div className="product-emoji">{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
-                <div className="product-body">
-                  <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a></div>
-                  <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
-                    <span className="tag">{p.category}</span>
-                    {p.subcategory && <span className="tag tag-sub">{p.subcategory}</span>}
-                    {p.sku && <span className="product-sku">{p.sku}</span>}
-                  </div>
-                  <div className="product-desc">{p.description}</div>
-                  <div>
-                    {discount > 0 ? <>
-                      <span className="product-price-original">{fmt(p.price)}</span>{" "}
-                      <span className="product-price">{fmt(dp)}</span>
-                      <div className="product-price-discount">Oszczędzasz {fmt(p.price - dp)}</div>
-                    </> : <span className="product-price">{fmt(p.price)}</span>}
-                  </div>
-                  <div className="text-sm text-muted">Magazyn: <strong>{p.stock}</strong> {units.find(u => u.value === p.unit)?.label || "szt."}</div>
-                </div>
-                <div className="product-footer">
-                  <button className="btn btn-primary w-full" onClick={() => onAdd(p)} disabled={p.stock === 0}>
-                    {p.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>}
     </>
   );
 }
