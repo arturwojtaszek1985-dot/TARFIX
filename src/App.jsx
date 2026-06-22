@@ -229,6 +229,19 @@ const css = `
   .category-count{text-align:right;color:var(--muted);font-size:.78rem;font-weight:400}
   .category-row.active .category-count{color:var(--primary)}
   .shop-main{min-width:0}
+
+  /* ── Baner reklamowy na stronie głównej sklepu ── */
+  .banner-slot{margin-bottom:20px}
+  .banner-display{position:relative;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+  .banner-image{width:100%;max-height:280px;object-fit:cover;display:block}
+  .banner-admin-controls{position:absolute;top:10px;right:10px;display:flex;gap:6px}
+  .banner-placeholder{border:2.5px dashed #c7d2dd;border-radius:var(--radius);padding:36px 20px;text-align:center;background:#f8fafc;cursor:pointer;transition:all .15s}
+  .banner-placeholder:hover{border-color:var(--primary);background:var(--primary-light)}
+  .banner-placeholder-icon{font-size:2.2rem;margin-bottom:8px}
+  .banner-placeholder-text{font-size:.9rem;color:var(--muted);font-weight:500}
+  .banner-edit-card{margin-bottom:0}
+  .banner-preview{width:160px;height:90px;border-radius:10px;background:#f8fafc;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0}
+  .banner-preview img{width:100%;height:100%;object-fit:cover}
   .tab-sub{padding:6px 14px;font-size:.8rem;border-color:#7dd3fc;color:#0369a1}
   .tab-sub:hover{background:#e0f2fe}
   .tab-sub.active{background:#0369a1;color:#fff;border-color:#0369a1;box-shadow:0 2px 8px rgba(3,105,161,.3)}
@@ -320,6 +333,7 @@ const css = `
   .tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:.73rem;font-weight:500;background:#e3f7ef;color:#17956f}
   .tag-sub{background:#e0f2fe;color:#0369a1}
   .tag-subsub{background:#f3e8ff;color:#7c3aed;font-size:.72rem}
+  .tag-subsubsub{background:#ffe4e6;color:#be123c;font-size:.68rem}
   .subcat-tree-node{margin-bottom:10px}
   .subcat-children{margin-left:18px;margin-bottom:6px}
 
@@ -472,6 +486,7 @@ export default function App() {
     mapEmbedUrl: "",
     extraNote: "Zapraszamy do kontaktu w sprawie zamówień, reklamacji oraz współpracy.",
   });
+  const [bannerInfo, setBannerInfo] = useState({ image: "", link: "", enabled: false });
   const [dbError, setDbError] = useState(null);
 
   // Wczytanie produktów i kategorii z bazy Supabase przy starcie aplikacji.
@@ -511,6 +526,13 @@ export default function App() {
         if (!cancelled && dbContact) setContactInfo(prev => ({ ...prev, ...dbContact }));
       } catch (err) {
         console.warn("Brak zapisanych danych kontaktowych w bazie — używam domyślnych:", err.message);
+      }
+      // To samo dla banera reklamowego na stronie głównej sklepu.
+      try {
+        const dbBanner = await api.fetchBannerInfo();
+        if (!cancelled && dbBanner) setBannerInfo(prev => ({ ...prev, ...dbBanner }));
+      } catch (err) {
+        console.warn("Brak zapisanego banera w bazie — używam domyślnych:", err.message);
       }
     })();
     return () => { cancelled = true; };
@@ -642,7 +664,7 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} />}
+          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} />}
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
@@ -1106,7 +1128,46 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
 }
 
 
-function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts }) {
+function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert }) {
+  const [bannerEditing, setBannerEditing] = useState(false);
+  const [bannerForm, setBannerForm] = useState(bannerInfo);
+  const bannerFileRef = useRef(null);
+
+  useEffect(() => { setBannerForm(bannerInfo); }, [bannerInfo]);
+
+  const handleBannerUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return showAlert("Wybierz plik graficzny (JPG, PNG)", "danger");
+    if (file.size > 3 * 1024 * 1024) return showAlert("Plik jest większy niż 3 MB — wybierz mniejsze zdjęcie", "danger");
+    const reader = new FileReader();
+    reader.onload = () => setBannerForm(f => ({ ...f, image: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const saveBanner = async () => {
+    try {
+      await api.saveBannerInfo(bannerForm);
+      setBannerInfo(bannerForm);
+      setBannerEditing(false);
+      showAlert("Baner zapisany");
+    } catch (err) {
+      showAlert("Nie udało się zapisać banera: " + err.message, "danger");
+    }
+  };
+
+  const removeBanner = async () => {
+    const cleared = { image: "", link: "", enabled: false };
+    try {
+      await api.saveBannerInfo(cleared);
+      setBannerInfo(cleared);
+      setBannerForm(cleared);
+      showAlert("Baner usunięty");
+    } catch (err) {
+      showAlert("Nie udało się usunąć banera: " + err.message, "danger");
+    }
+  };
+
   const selectCategory = (c) => {
     setFilterCat(c);
     setFilterSubcat("Wszystkie"); // reset podkategorii przy zmianie kategorii głównej
@@ -1114,6 +1175,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
 
   const activeSubcats = categoriesFull.find(c => c.name === filterCat)?.subcategories || [];
   const countFor = (catName) => catName === "Wszystkie" ? allProducts.length : allProducts.filter(p => p.category === catName).length;
+  const showBannerSlot = true; // baner widoczny na każdej stronie kategorii, nie tylko "Wszystkie"
 
   return (
     <>
@@ -1159,6 +1221,66 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
               {activeSubcats.map(s => <button key={s} className={`tab tab-sub ${filterSubcat === s ? "active" : ""}`} onClick={() => setFilterSubcat(s)}>{s}</button>)}
             </div>
           )}
+
+          {showBannerSlot && (
+            <div className="banner-slot">
+              {bannerEditing ? (
+                <div className="card banner-edit-card">
+                  <h3 className="card-title">📣 Edytuj baner reklamowy</h3>
+                  <div className="form-group">
+                    <label className="form-label">Zdjęcie banera</label>
+                    <div className="photo-upload-row">
+                      <div className="banner-preview">
+                        {bannerForm.image ? <img src={bannerForm.image} alt="podgląd banera" /> : <span className="text-sm text-muted">Brak zdjęcia</span>}
+                      </div>
+                      <div className="flex gap-2" style={{ flexDirection: "column" }}>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", width: "fit-content" }}>
+                          📷 {bannerForm.image ? "Zmień zdjęcie" : "Wgraj zdjęcie"}
+                          <input ref={bannerFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleBannerUpload} />
+                        </label>
+                        {bannerForm.image && <button type="button" className="btn btn-danger btn-sm" style={{ width: "fit-content" }} onClick={() => setBannerForm(f => ({ ...f, image: "" }))}>🗑️ Usuń zdjęcie</button>}
+                        <span className="text-sm text-muted">JPG/PNG, max 3 MB. Polecana szerokość: pełna szerokość sklepu.</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Link (opcjonalnie — dokąd przenosi kliknięcie banera)</label>
+                    <input className="form-input" placeholder="https://..." value={bannerForm.link} onChange={e => setBannerForm(f => ({ ...f, link: e.target.value }))} />
+                  </div>
+                  <label className="flex items-center gap-2" style={{ cursor: "pointer", marginBottom: 14 }}>
+                    <input type="checkbox" checked={bannerForm.enabled} onChange={e => setBannerForm(f => ({ ...f, enabled: e.target.checked }))} />
+                    <span className="text-sm">Pokazuj baner na stronie głównej sklepu</span>
+                  </label>
+                  <div className="flex gap-3">
+                    <button className="btn btn-primary" style={{ flex: 1 }} onClick={saveBanner}>💾 Zapisz</button>
+                    <button className="btn btn-secondary" onClick={() => { setBannerForm(bannerInfo); setBannerEditing(false); }}>Anuluj</button>
+                  </div>
+                </div>
+              ) : bannerInfo.enabled && bannerInfo.image ? (
+                <div className="banner-display">
+                  {bannerInfo.link ? (
+                    <a href={bannerInfo.link} target="_blank" rel="noopener noreferrer">
+                      <img src={bannerInfo.image} alt="Reklama" className="banner-image" />
+                    </a>
+                  ) : (
+                    <img src={bannerInfo.image} alt="Reklama" className="banner-image" />
+                  )}
+                  {isAdmin && (
+                    <div className="banner-admin-controls">
+                      <button className="btn btn-secondary btn-sm" onClick={() => setBannerEditing(true)}>✏️ Edytuj baner</button>
+                      <button className="btn btn-danger btn-sm" onClick={removeBanner}>🗑️ Usuń baner</button>
+                    </div>
+                  )}
+                </div>
+              ) : isAdmin ? (
+                <div className="banner-placeholder" onClick={() => setBannerEditing(true)}>
+                  <div className="banner-placeholder-icon">📣</div>
+                  <div className="banner-placeholder-text">Kliknij, aby dodać baner reklamowy</div>
+                </div>
+              ) : null}
+            </div>
+          )}
+
           {products.length === 0
             ? <div className="empty-state"><div className="icon">📦</div>Brak produktów</div>
             : <div className="products-grid">
@@ -1747,6 +1869,53 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
 }
 
 // ── ADMIN PRODUKTY ────────────────────────────────────────────────────────────
+// ── Rekurencyjny węzeł drzewa podkategorii (nieograniczona głębokość) ────────
+const SUBCAT_TAG_COLORS = ["tag-sub", "tag-subsub", "tag-subsubsub"];
+
+function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, addSubcategory, removeSubcategory }) {
+  const children = Object.values(node.children);
+  const count = products.filter(p => p.category === catName && p.subcategory === node.fullPath).length;
+  const tagClass = SUBCAT_TAG_COLORS[Math.min(depth, SUBCAT_TAG_COLORS.length - 1)];
+  const prefix = depth === 0 ? "" : "↳ ".repeat(1);
+  const label = depth === 0 ? node.name : `${prefix}${node.name}`;
+
+  return (
+    <div className="subcat-tree-node" style={{ marginLeft: depth * 18 }}>
+      <div className="flex gap-2 items-center" style={{ marginBottom: 6 }}>
+        <span className={`tag ${tagClass}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 6px 5px 10px" }}>
+          {label} <span className="text-muted">({count})</span>
+          <button onClick={() => removeSubcategory(catName, node.fullPath)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, padding: "0 3px" }} title="Usuń (i wszystkie jej dzieci)">✕</button>
+        </span>
+      </div>
+
+      {children.length > 0 && (
+        <div className="subcat-children">
+          {children.map(child => (
+            <SubcatTreeNode
+              key={child.fullPath}
+              node={child}
+              catName={catName}
+              depth={depth + 1}
+              products={products}
+              newSub={newSub}
+              setNewSub={setNewSub}
+              addSubcategory={addSubcategory}
+              removeSubcategory={removeSubcategory}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 mb-3" style={{ marginLeft: 18 }}>
+        <input className="form-input" style={{ fontSize: ".8rem" }} placeholder={`Nowa podkategoria w "${node.fullPath}"`}
+          value={newSub[`${catName}::${node.fullPath}`] || ""} onChange={e => setNewSub(prev => ({ ...prev, [`${catName}::${node.fullPath}`]: e.target.value }))}
+          onKeyDown={e => e.key === "Enter" && addSubcategory(catName, node.fullPath)} />
+        <button className="btn btn-secondary btn-sm" onClick={() => addSubcategory(catName, node.fullPath)}>+ Dodaj</button>
+      </div>
+    </div>
+  );
+}
+
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
   const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "" });
   const [newCat, setNewCat] = useState("");
@@ -1857,20 +2026,21 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     }
   };
 
-  // Budowanie drzewa podkategorii z płaskiej listy stringów typu "Rodzic / Dziecko"
+  // Budowanie drzewa podkategorii z płaskiej listy stringów typu "A / B / C / ..."
+  // Wsparcie dla nieograniczonej głębokości zagnieżdżenia.
   const buildSubcatTree = (subcats) => {
-    const tree = {};
-    subcats.forEach(s => {
-      const parts = s.split(" / ");
-      if (parts.length === 1) {
-        tree[s] = tree[s] || { fullPath: s, children: {} };
-      } else {
-        const [parent, child] = parts;
-        tree[parent] = tree[parent] || { fullPath: parent, children: {} };
-        tree[parent].children[child] = { fullPath: s };
-      }
+    const root = {};
+    subcats.forEach(full => {
+      const parts = full.split(" / ");
+      let node = root;
+      let pathSoFar = "";
+      parts.forEach((part, i) => {
+        pathSoFar = pathSoFar ? `${pathSoFar} / ${part}` : part;
+        if (!node[part]) node[part] = { name: part, fullPath: pathSoFar, children: {} };
+        node = node[part].children;
+      });
     });
-    return tree;
+    return root;
   };
 
   const addUnit = () => {
@@ -2073,30 +2243,17 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                               ? <p className="text-sm text-muted" style={{ marginBottom: 10 }}>Brak podkategorii.</p>
                               : <div style={{ marginBottom: 12 }}>
                                 {Object.values(tree).map(node => (
-                                  <div key={node.fullPath} className="subcat-tree-node">
-                                    <div className="flex gap-2 items-center" style={{ marginBottom: 6 }}>
-                                      <span className="tag tag-sub" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 6px 5px 10px" }}>
-                                        {node.fullPath} <span className="text-muted">({products.filter(p => p.category === cat.name && p.subcategory === node.fullPath).length})</span>
-                                        <button onClick={() => removeSubcategory(cat.name, node.fullPath)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, padding: "0 3px" }} title="Usuń podkategorię (i jej dzieci)">✕</button>
-                                      </span>
-                                    </div>
-                                    {Object.values(node.children).length > 0 && (
-                                      <div className="subcat-children">
-                                        {Object.values(node.children).map(child => (
-                                          <span key={child.fullPath} className="tag tag-subsub" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 6px 4px 10px", marginRight: 6, marginBottom: 6 }}>
-                                            ↳ {child.fullPath.split(" / ")[1]} <span className="text-muted">({products.filter(p => p.category === cat.name && p.subcategory === child.fullPath).length})</span>
-                                            <button onClick={() => removeSubcategory(cat.name, child.fullPath)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", fontWeight: 700, padding: "0 3px" }} title="Usuń pod-podkategorię">✕</button>
-                                          </span>
-                                        ))}
-                                      </div>
-                                    )}
-                                    <div className="flex gap-2 mb-3" style={{ marginLeft: 18 }}>
-                                      <input className="form-input" style={{ fontSize: ".8rem" }} placeholder={`Nowa pod-podkategoria w "${node.fullPath}"`}
-                                        value={newSub[`${cat.name}::${node.fullPath}`] || ""} onChange={e => setNewSub(prev => ({ ...prev, [`${cat.name}::${node.fullPath}`]: e.target.value }))}
-                                        onKeyDown={e => e.key === "Enter" && addSubcategory(cat.name, node.fullPath)} />
-                                      <button className="btn btn-secondary btn-sm" onClick={() => addSubcategory(cat.name, node.fullPath)}>+ Dodaj</button>
-                                    </div>
-                                  </div>
+                                  <SubcatTreeNode
+                                    key={node.fullPath}
+                                    node={node}
+                                    catName={cat.name}
+                                    depth={0}
+                                    products={products}
+                                    newSub={newSub}
+                                    setNewSub={setNewSub}
+                                    addSubcategory={addSubcategory}
+                                    removeSubcategory={removeSubcategory}
+                                  />
                                 ))}
                               </div>}
                             <div className="flex gap-2">

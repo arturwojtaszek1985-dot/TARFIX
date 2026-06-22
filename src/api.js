@@ -161,3 +161,16 @@ export async function saveContactInfo(contactInfo) {
   if (error) throw error;
 }
 
+export async function fetchBannerInfo() {
+  const { data, error } = await supabase.from("settings").select("value").eq("key", "shop_banner").single();
+  if (error) throw error;
+  return data?.value || null;
+}
+
+export async function saveBannerInfo(bannerInfo) {
+  const { error } = await supabase
+    .from("settings")
+    .upsert({ key: "shop_banner", value: bannerInfo }, { onConflict: "key" });
+  if (error) throw error;
+}
+
