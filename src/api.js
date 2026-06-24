@@ -181,7 +181,7 @@ export async function saveBannerInfo(bannerInfo) {
 // Jeśli funkcja nie jest jeszcze wdrożona (lub brak klucza Resend), zgłasza
 // błąd — App.jsx łapie go tak, by nie przerywać składania zamówienia.
 export async function sendOrderConfirmationEmail(order, contactInfo, recipientEmail) {
-  const { data, error } = await supabase.functions.invoke("send-order-confirmation", {
+  const { data, error } = await supabase.functions.invoke("SEND-ORDER-CONFIRMATION", {
     body: { order, contactInfo, recipientEmail },
   });
   if (error) throw error;
