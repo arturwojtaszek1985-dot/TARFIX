@@ -122,6 +122,18 @@ export async function fetchProducts() {
   return data;
 }
 
+// OMNIBUS: pobiera najniższe ceny z 30 dni dla wszystkich produktów naraz.
+// Zwraca mapę { [productId]: najniższaCena30dni | null }.
+export async function fetchOmnibusFloors() {
+  const { data, error } = await supabase.from("product_omnibus").select("*");
+  if (error) throw error;
+  const map = {};
+  (data || []).forEach(r => {
+    map[r.product_id] = r.lowest_30d != null ? Number(r.lowest_30d) : null;
+  });
+  return map;
+}
+
 export async function addProduct(product) {
   const { data, error } = await supabase.from("products").insert(product).select().single();
   if (error) throw error;

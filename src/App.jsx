@@ -150,6 +150,12 @@ const EMOJI_MAP = {
 const getEmoji = (cat) => EMOJI_MAP[cat] || "📦";
 
 const fmt = (n) => (+n || 0).toLocaleString("pl-PL", { style: "currency", currency: "PLN" });
+
+// OMNIBUS: czy produkt ma aktywną promocję (cena promocyjna < regularna i > 0)
+const hasPromo = (p) => p?.promoPrice != null && p.promoPrice > 0 && p.promoPrice < p.price;
+// Cena efektywna = promocyjna jeśli aktywna, w przeciwnym razie regularna.
+// To jest cena, od której naliczany jest rabat klienta i która trafia do koszyka.
+const effPrice = (p) => (hasPromo(p) ? p.promoPrice : p.price);
 const parseNum = (s) => parseFloat(String(s).replace(",", ".").replace(/\s/g, "")) || 0;
 
 // ── Style ─────────────────────────────────────────────────────────────────────
@@ -267,6 +273,8 @@ const css = `
   .product-price{font-size:1.15rem;font-weight:700;color:var(--primary)}
   .product-price-original{text-decoration:line-through;color:var(--muted);font-size:.82rem;font-weight:400}
   .product-price-discount{color:var(--success);font-size:.78rem;font-weight:600}
+  .promo-badge{display:inline-block;margin-left:8px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:6px;vertical-align:middle;text-transform:uppercase;letter-spacing:.3px}
+  .omnibus-note{color:var(--muted);font-size:.72rem;margin-top:4px;line-height:1.35}
   .product-footer{padding:10px 12px;border-top:1px solid var(--border);background:#fafafa}
   .product-sku{font-size:.72rem;color:var(--muted);font-family:monospace}
 
@@ -469,6 +477,7 @@ const css = `
 export default function App() {
   const [users, setUsers] = useState(INITIAL_USERS);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [omnibusFloors, setOmnibusFloors] = useState({});
   const [units, setUnits] = useState(DEFAULT_UNITS);
   const [categories, setCategories] = useState([
     { name: "Elektronika", subcategories: ["Laptopy", "Audio", "Smartwatche"] },
@@ -501,6 +510,14 @@ export default function App() {
           api.fetchCategories(),
         ]);
         if (cancelled) return;
+        // Najniższe ceny z 30 dni (Omnibus) — pobierane osobno, by ewentualny
+        // brak widoku product_omnibus nie zablokował ładowania produktów.
+        try {
+          const floors = await api.fetchOmnibusFloors();
+          if (!cancelled) setOmnibusFloors(floors || {});
+        } catch (e) {
+          console.warn("Nie udało się pobrać najniższych cen z 30 dni (Omnibus):", e.message);
+        }
         if (dbProducts && dbProducts.length > 0) {
           setProducts(dbProducts.map(p => ({
             id: p.id, sku: p.sku, name: p.name, category: p.category,
@@ -508,6 +525,7 @@ export default function App() {
             price: Number(p.price), stock: p.stock, weight: Number(p.weight) || 0,
             unit: p.unit || "szt", image: p.image || "📦", photo: p.photo || "",
             longDescription: p.long_description || "", specs: p.specs || [],
+            promoPrice: p.promo_price != null ? Number(p.promo_price) : null,
           })));
         }
         if (dbCategories && dbCategories.length > 0) {
@@ -613,10 +631,14 @@ export default function App() {
   };
 
   const addToCart = (p) => {
+    // Do koszyka trafia cena efektywna (promocyjna, jeśli aktywna). Rabat
+    // klienta naliczany jest dalej od sumy koszyka. regularPrice zachowujemy
+    // pomocniczo (np. do pokazania przekreślonej ceny w koszyku w przyszłości).
+    const item = { ...p, price: effPrice(p), regularPrice: p.price, promoActive: hasPromo(p) };
     setCart(prev => {
       const ex = prev.find(i => i.id === p.id);
       if (ex) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { ...p, qty: 1 }];
+      return [...prev, { ...item, qty: 1 }];
     });
     showAlert(`Dodano "${p.name}" do koszyka`);
   };
@@ -744,8 +766,8 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} />}
-          {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} />}
+          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} />}
+          {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} omnibusFloors={omnibusFloors} />}
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
@@ -1437,7 +1459,11 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
             ? <div className="empty-state"><div className="icon">📦</div>Brak produktów</div>
             : <div className="products-grid">
               {products.map(p => {
-                const dp = p.price * (1 - discount / 100);
+                const promo = hasPromo(p);
+                const base = effPrice(p);                      // cena promocyjna lub regularna
+                const dp = base * (1 - discount / 100);         // cena po rabacie klienta
+                const floor = omnibusFloors[p.id];              // najniższa cena z 30 dni
+                const omnibusRef = floor != null ? floor : p.price;
                 return (
                   <div key={p.id} className="product-card">
                     <div className="product-emoji product-link" onClick={() => onOpenDetail(p.id)}>{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
@@ -1450,11 +1476,17 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                       </div>
                       <div className="product-desc">{p.description}</div>
                       <div>
-                        {discount > 0 ? <>
+                        {promo ? <>
+                          <span className="product-price-original">{fmt(p.price)}</span>{" "}
+                          <span className="product-price">{fmt(discount > 0 ? dp : base)}</span>
+                          <span className="promo-badge">Promocja</span>
+                          {discount > 0 && <div className="product-price-discount">w tym Twój rabat {discount}%</div>}
+                          <div className="omnibus-note">Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>
+                        </> : (discount > 0 ? <>
                           <span className="product-price-original">{fmt(p.price)}</span>{" "}
                           <span className="product-price">{fmt(dp)}</span>
                           <div className="product-price-discount">Oszczędzasz {fmt(p.price - dp)}</div>
-                        </> : <span className="product-price">{fmt(p.price)}</span>}
+                        </> : <span className="product-price">{fmt(p.price)}</span>)}
                       </div>
                       <div className="text-sm text-muted">Magazyn: <strong>{p.stock}</strong> {units.find(u => u.value === p.unit)?.label || "szt."}</div>
                     </div>
@@ -1475,7 +1507,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
 
 // ── IMPORT CSV (główna nowość) ─────────────────────────────────────────────────
 // ── STRONA SZCZEGÓŁÓW PRODUKTU ────────────────────────────────────────────────
-function ProductDetailPage({ product, units, discount, onAdd, onBack }) {
+function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFloors }) {
   if (!product) {
     return (
       <div className="empty-state">
@@ -1486,7 +1518,11 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack }) {
     );
   }
 
-  const discountedPrice = product.price * (1 - discount / 100);
+  const promo = hasPromo(product);
+  const base = effPrice(product);
+  const discountedPrice = base * (1 - discount / 100);
+  const floor = omnibusFloors ? omnibusFloors[product.id] : null;
+  const omnibusRef = floor != null ? floor : product.price;
   const unitLabel = units.find(u => u.value === product.unit)?.label || "szt.";
 
   return (
@@ -1514,13 +1550,21 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack }) {
           <p className="text-muted">{product.description}</p>
 
           <div className="pdp-price">
-            {discount > 0 ? (
+            {promo ? (
+              <>
+                <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(product.price)}</span>{" "}
+                {fmt(discount > 0 ? discountedPrice : base)}
+                <span className="promo-badge">Promocja</span>
+                {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 w tym Twój rabat {discount}%</div>}
+                <div className="omnibus-note" style={{ fontSize: ".85rem" }}>Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>
+              </>
+            ) : (discount > 0 ? (
               <>
                 <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(product.price)}</span>{" "}
                 {fmt(discountedPrice)}
                 <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — oszczędzasz {fmt(product.price - discountedPrice)}</div>
               </>
-            ) : fmt(product.price)}
+            ) : fmt(product.price))}
           </div>
 
           <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{product.weight ? ` · waga: ${product.weight} kg/${unitLabel === "kg" ? "kg" : "szt."}` : ""}</p>
@@ -2069,7 +2113,7 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "" });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "" });
   const [newCat, setNewCat] = useState("");
   const [newUnitValue, setNewUnitValue] = useState("");
   const [newUnitLabel, setNewUnitLabel] = useState("");
@@ -2088,24 +2132,28 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     reader.readAsDataURL(file);
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "" }); setEditItem(null); setModal("product"); };
-  const openEdit = (p) => { setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [] }); setEditItem(p); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "" }); setEditItem(null); setModal("product"); };
+  const openEdit = (p) => { setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [] }); setEditItem(p); setModal("product"); };
   const save = async () => {
     if (!form.name || !form.price) return showAlert("Wypełnij wymagane pola", "danger");
     if (!form.category) return showAlert("Wybierz kategorię", "danger");
+    // Cena promocyjna: puste pole = brak promocji (null). Musi być > 0 i < ceny regularnej.
+    const promoVal = form.promoPrice === "" || form.promoPrice == null ? null : +form.promoPrice;
+    if (promoVal != null && (isNaN(promoVal) || promoVal <= 0)) return showAlert("Cena promocyjna musi być liczbą większą od 0 (lub puste pole)", "danger");
+    if (promoVal != null && promoVal >= +form.price) return showAlert("Cena promocyjna musi być niższa od ceny regularnej", "danger");
     const payload = {
       sku: form.sku, name: form.name, category: form.category, subcategory: form.subcategory,
-      description: form.description, price: +form.price, stock: +form.stock, weight: +form.weight || 0,
+      description: form.description, price: +form.price, promo_price: promoVal, stock: +form.stock, weight: +form.weight || 0,
       unit: form.unit, image: form.image, photo: form.photo,
       long_description: form.longDescription, specs: form.specs,
     };
     try {
       if (editItem) {
         const updated = await api.updateProduct(editItem.id, payload);
-        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: +form.price, stock: +form.stock, weight: +form.weight || 0 } : p));
+        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0 } : p));
       } else {
         const created = await api.addProduct(payload);
-        setProducts(prev => [...prev, { ...form, id: created.id, price: +form.price, stock: +form.stock, weight: +form.weight || 0 }]);
+        setProducts(prev => [...prev, { ...form, id: created.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0 }]);
       }
       showAlert(editItem ? "Produkt zaktualizowany" : "Produkt dodany"); setModal(null);
     } catch (err) {
@@ -2242,7 +2290,12 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                 </td>
                 <td><span className="badge badge-blue">{p.category}</span></td>
                 <td>{p.subcategory ? <span className="badge badge-gray">{p.subcategory}</span> : <span className="text-muted text-sm">—</span>}</td>
-                <td className="font-bold" style={{ color: "var(--primary)" }}>{fmt(p.price)}</td>
+                <td className="font-bold" style={{ color: "var(--primary)" }}>
+                  {hasPromo(p) ? <>
+                    <span style={{ textDecoration: "line-through", color: "var(--muted)", fontWeight: 400, fontSize: ".8rem" }}>{fmt(p.price)}</span>{" "}
+                    <span style={{ color: "#dc2626" }}>{fmt(p.promoPrice)}</span>
+                  </> : fmt(p.price)}
+                </td>
                 <td className="text-sm text-muted">{p.weight ? `${p.weight} kg` : "—"}</td>
                 <td><span className={`badge ${p.stock > 10 ? "badge-green" : p.stock > 0 ? "badge-orange" : "badge-red"}`}>{p.stock} {units.find(u => u.value === p.unit)?.label || "szt."}</span></td>
                 <td><div className="flex gap-2">
@@ -2337,6 +2390,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
 
               <div className="flex gap-3">
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena brutto *</label><input className="form-input" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} /></div>
+                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena promocyjna</label><input className="form-input" type="number" step="0.01" min="0" placeholder="puste = brak promocji" value={form.promoPrice} onChange={e => setForm(f => ({ ...f, promoPrice: e.target.value }))} /></div>
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Stan magazynowy</label><input className="form-input" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} /></div>
               </div>
               <div className="flex gap-3">
