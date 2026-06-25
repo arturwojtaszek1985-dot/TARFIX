@@ -188,9 +188,12 @@ export async function updateProfileRole(id, role) {
 // ════════════════════════════════════════════════════════════════════════
 
 export async function createOrder(order) {
-  const { data, error } = await supabase.from("orders").insert(order).select().single();
+  // Zapis bez odczytu zwrotnego (.select()). Dzięki temu po zaostrzeniu RLS
+  // gość (brak konta) wciąż może złożyć zamówienie — insert nie wymaga wtedy
+  // polityki SELECT. Aplikacja i tak nie używa zwracanego wiersza (lokalne
+  // zamówienie ma własne id, a mail korzysta z przekazanych danych).
+  const { error } = await supabase.from("orders").insert(order);
   if (error) throw error;
-  return data;
 }
 
 export async function fetchOrders(userId, isAdmin) {
