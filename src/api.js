@@ -241,8 +241,28 @@ export async function saveBannerInfo(bannerInfo) {
 // Jeśli funkcja nie jest jeszcze wdrożona (lub brak klucza Resend), zgłasza
 // błąd — App.jsx łapie go tak, by nie przerywać składania zamówienia.
 export async function sendOrderConfirmationEmail(order, contactInfo, recipientEmail) {
+  // Do funkcji maila wysyłamy TYLKO dane, których używa szablon wiadomości
+  // (nazwa, ilość, cena pozycji + podsumowanie). Pomijamy ciężkie pola jak
+  // zdjęcia produktów (base64), długie opisy i specyfikacje — bez tego
+  // żądanie jest małe (kilka KB zamiast ~126 KB) i nie jest odrzucane.
+  const slimOrder = {
+    id: order.id,
+    items: (order.items || []).map(it => ({ name: it.name, qty: it.qty, price: it.price })),
+    discount: order.discount,
+    discountAmt: order.discountAmt,
+    shippingCost: order.shippingCost,
+    freeShipping: order.freeShipping,
+    total: order.total,
+  };
+  const slimContact = contactInfo ? {
+    companyName: contactInfo.companyName,
+    address: contactInfo.address,
+    phone: contactInfo.phone,
+    email: contactInfo.email,
+  } : null;
+
   const { data, error } = await supabase.functions.invoke("SEND-ORDER-CONFIRMATION", {
-    body: { order, contactInfo, recipientEmail },
+    body: { order: slimOrder, contactInfo: slimContact, recipientEmail },
   });
   if (error) throw error;
   return data;
