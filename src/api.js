@@ -32,6 +32,51 @@ export async function getProfile(userId) {
   return data;
 }
 
+// Zmiana hasła zalogowanego użytkownika (Supabase Auth).
+// Wymaga aktywnej sesji — użytkownik musi być zalogowany.
+export async function changePassword(newPassword) {
+  const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw error;
+  return data;
+}
+
+// Zwraca aktualnie zalogowanego użytkownika Auth (lub null, jeśli brak sesji).
+// Używane przy starcie aplikacji do przywrócenia sesji po odświeżeniu strony.
+export async function getSessionUser() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  return data?.session?.user || null;
+}
+
+// Subskrypcja zmian stanu logowania (login / logout / odświeżenie tokenu).
+// Zwraca funkcję do odsubskrybowania.
+export function onAuthChange(callback) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session?.user || null);
+  });
+  return () => data?.subscription?.unsubscribe();
+}
+
+// Buduje obiekt użytkownika w formacie używanym przez aplikację
+// ({ id, name, email, role, discount }) na podstawie użytkownika Auth + profilu.
+export async function buildAppUser(authUser) {
+  if (!authUser) return null;
+  let profile = null;
+  try {
+    profile = await getProfile(authUser.id);
+  } catch (err) {
+    // Profil może jeszcze nie istnieć (trigger tworzy go przy rejestracji).
+    console.warn("Nie udało się pobrać profilu użytkownika:", err.message);
+  }
+  return {
+    id: authUser.id,
+    email: authUser.email,
+    name: profile?.name || authUser.user_metadata?.name || authUser.email,
+    role: profile?.role || "customer",
+    discount: profile?.discount || 0,
+  };
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // KATEGORIE
 // ════════════════════════════════════════════════════════════════════════
