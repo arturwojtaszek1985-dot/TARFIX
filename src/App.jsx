@@ -1302,7 +1302,7 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
 }
 
 
-function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert }) {
+function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors }) {
   const [bannerEditing, setBannerEditing] = useState(false);
   const [bannerForm, setBannerForm] = useState(bannerInfo);
   const bannerFileRef = useRef(null);
