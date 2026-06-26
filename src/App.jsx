@@ -166,6 +166,30 @@ const productOptions = (p) => {
 const hasMultipleOptions = (p) => productOptions(p).length > 1;
 const minOptionPrice = (p) => Math.min(...productOptions(p).map(o => +o.price || 0));
 const optLabel = (o) => o.name && o.name.trim() ? o.name : "Opcja podstawowa";
+
+// WARIANTY (styl Allegro): produkt ma grupy atrybutów i kombinacje (warianty).
+const hasVariants = (p) =>
+  Array.isArray(p?.attributeGroups) && p.attributeGroups.length > 0 &&
+  Array.isArray(p?.variants) && p.variants.length > 0;
+// Znajduje wariant pasujący do pełnej kombinacji wyborów (obiekt {grupa: wartość}).
+const findVariant = (p, combo) =>
+  (p.variants || []).find(v => (p.attributeGroups || []).every(g => v.combo?.[g.name] === combo[g.name]));
+// Zbiór wartości danej grupy, które są osiągalne przy bieżących wyborach w pozostałych grupach
+// (do wyszarzania niedostępnych kafelków).
+const availableValues = (p, groupName, combo) => {
+  const others = (p.attributeGroups || []).filter(g => g.name !== groupName);
+  const set = new Set();
+  (p.variants || []).forEach(v => {
+    const matchOthers = others.every(g => !combo[g.name] || v.combo?.[g.name] === combo[g.name]);
+    if (matchOthers && v.combo?.[groupName] != null) set.add(v.combo[groupName]);
+  });
+  return set;
+};
+const minVariantPrice = (p) => {
+  const prices = (p.variants || []).map(v => +v.price || 0).filter(n => n > 0);
+  return prices.length ? Math.min(...prices) : 0;
+};
+const comboLabel = (combo) => Object.values(combo || {}).join(" · ");
 const parseNum = (s) => parseFloat(String(s).replace(",", ".").replace(/\s/g, "")) || 0;
 
 // ── Style ─────────────────────────────────────────────────────────────────────
@@ -285,6 +309,13 @@ const css = `
   .product-price-discount{color:var(--success);font-size:.78rem;font-weight:600}
   .promo-badge{display:inline-block;margin-left:8px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:6px;vertical-align:middle;text-transform:uppercase;letter-spacing:.3px}
   .omnibus-note{color:var(--muted);font-size:.72rem;margin-top:4px;line-height:1.35}
+  .attr-group{margin:12px 0}
+  .attr-group-label{font-size:.8rem;color:var(--muted);margin-bottom:6px;font-weight:500}
+  .attr-tiles{display:flex;flex-wrap:wrap;gap:8px}
+  .attr-tile{padding:8px 14px;border:1.5px solid var(--border);border-radius:8px;background:#fff;font-size:.85rem;font-weight:600;cursor:pointer;color:#333;transition:all .12s}
+  .attr-tile:hover:not(:disabled){border-color:var(--primary)}
+  .attr-tile.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
+  .attr-tile:disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
   .product-footer{padding:10px 12px;border-top:1px solid var(--border);background:#fafafa}
   .product-sku{font-size:.72rem;color:var(--muted);font-family:monospace}
 
@@ -543,6 +574,14 @@ export default function App() {
               sku: o.sku || "",
               weight: Number(o.weight) || 0,
             })) : [],
+            attributeGroups: Array.isArray(p.attribute_groups) ? p.attribute_groups : [],
+            variants: Array.isArray(p.variants) ? p.variants.map(v => ({
+              id: v.id || String(Math.random()).slice(2),
+              combo: v.combo || {},
+              price: Number(v.price) || 0,
+              sku: v.sku || "",
+              weight: Number(v.weight) || 0,
+            })) : [],
           })));
         }
         if (dbCategories && dbCategories.length > 0) {
@@ -695,7 +734,7 @@ export default function App() {
     // dotyczy tylko produktów z jedną opcją — przy wielu opcjach cena pochodzi
     // wprost z wybranej opcji.
     const opt = option || productOptions(p)[0];
-    const promo = hasPromo(p) && !hasMultipleOptions(p);
+    const promo = hasPromo(p) && !hasMultipleOptions(p) && !hasVariants(p);
     const unitPrice = promo ? p.promoPrice : (+opt.price || 0);
     const lineId = `${p.id}__${opt.id}`;
     const label = opt.name && opt.name.trim() ? `${p.name} — ${opt.name}` : p.name;
@@ -1573,11 +1612,12 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
             ? <div className="empty-state"><div className="icon">📦</div>Brak produktów</div>
             : <div className="products-grid">
               {products.map(p => {
+                const isVar = hasVariants(p);
                 const opts = productOptions(p);
                 const multi = opts.length > 1;
                 const selId = selectedOpt[p.id] ?? opts[0].id;
                 const sel = opts.find(o => o.id === selId) || opts[0];
-                const promo = hasPromo(p) && !multi;
+                const promo = hasPromo(p) && !multi && !isVar;
                 const base = multi ? (+sel.price || 0) : effPrice(p);  // cena wybranej opcji / efektywna
                 const dp = base * (1 - discount / 100);                // cena po rabacie klienta
                 const floor = omnibusFloors[p.id];                     // najniższa cena z 30 dni
@@ -1590,11 +1630,11 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                       <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
                         <span className="tag">{p.category}</span>
                         {p.subcategory && <span className="tag tag-sub">{p.subcategory}</span>}
-                        {sel.sku && <span className="product-sku">{sel.sku}</span>}
+                        {!isVar && sel.sku && <span className="product-sku">{sel.sku}</span>}
                       </div>
                       <div className="product-desc">{p.description}</div>
 
-                      {multi && (
+                      {!isVar && multi && (
                         <div className="form-group" style={{ margin: "2px 0 0" }}>
                           <label className="form-label" style={{ fontSize: ".75rem", marginBottom: 3 }}>Opcja pakowania:</label>
                           <select className="form-select" style={{ padding: "6px 8px", fontSize: ".85rem" }}
@@ -1605,7 +1645,11 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                       )}
 
                       <div>
-                        {promo ? <>
+                        {isVar ? <>
+                          <span className="text-sm text-muted" style={{ marginRight: 6 }}>od</span>
+                          <span className="product-price">{fmt(minVariantPrice(p))}</span>
+                          <div className="text-sm text-muted">{p.variants.length} wariantów do wyboru</div>
+                        </> : promo ? <>
                           <span className="product-price-original">{fmt(p.price)}</span>{" "}
                           <span className="product-price">{fmt(discount > 0 ? dp : base)}</span>
                           <span className="promo-badge">Promocja</span>
@@ -1624,9 +1668,11 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                       <div className="text-sm text-muted">Magazyn: <strong>{p.stock}</strong> {units.find(u => u.value === p.unit)?.label || "szt."}</div>
                     </div>
                     <div className="product-footer">
-                      <button className="btn btn-primary w-full" onClick={() => onAdd(p, sel)} disabled={p.stock === 0}>
-                        {p.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj"}
-                      </button>
+                      {isVar
+                        ? <button className="btn btn-primary w-full" onClick={() => onOpenDetail(p.id)} disabled={p.stock === 0}>{p.stock === 0 ? "Brak w magazynie" : "Wybierz wariant →"}</button>
+                        : <button className="btn btn-primary w-full" onClick={() => onAdd(p, sel)} disabled={p.stock === 0}>
+                            {p.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj"}
+                          </button>}
                     </div>
                   </div>
                 );
@@ -1642,7 +1688,8 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
 // ── STRONA SZCZEGÓŁÓW PRODUKTU ────────────────────────────────────────────────
 function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFloors }) {
   const [selOptId, setSelOptId] = useState(null);
-  useEffect(() => { if (product) setSelOptId(productOptions(product)[0]?.id); }, [product?.id]);
+  const [combo, setCombo] = useState({});
+  useEffect(() => { if (product) setSelOptId(productOptions(product)[0]?.id); setCombo({}); }, [product?.id]);
   if (!product) {
     return (
       <div className="empty-state">
@@ -1662,6 +1709,11 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
   const floor = omnibusFloors ? omnibusFloors[product.id] : null;
   const omnibusRef = floor != null ? floor : product.price;
   const unitLabel = units.find(u => u.value === product.unit)?.label || "szt.";
+  const isVar = hasVariants(product);
+  const matched = isVar ? findVariant(product, combo) : null;
+  const allSelected = isVar && (product.attributeGroups || []).every(g => combo[g.name]);
+  const varPrice = matched ? (+matched.price || 0) : minVariantPrice(product);
+  const varDisc = varPrice * (1 - discount / 100);
 
   return (
     <>
@@ -1687,38 +1739,83 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
           </div>
           <p className="text-muted">{product.description}</p>
 
-          {multi && (
-            <div className="form-group" style={{ maxWidth: 360 }}>
-              <label className="form-label">Opcja pakowania</label>
-              <select className="form-select" value={selOptId || opts[0].id} onChange={e => setSelOptId(e.target.value)}>
-                {opts.map(o => <option key={o.id} value={o.id}>{optLabel(o)} — {fmt(o.price)}{o.weight ? ` · ${o.weight} kg` : ""}</option>)}
-              </select>
-            </div>
+          {isVar ? (
+            <>
+              {(product.attributeGroups || []).map(g => {
+                const avail = availableValues(product, g.name, combo);
+                return (
+                  <div key={g.id || g.name} className="attr-group">
+                    <div className="attr-group-label">{g.name}{combo[g.name] ? `: ${combo[g.name]}` : ""}</div>
+                    <div className="attr-tiles">
+                      {(g.values || []).map(val => {
+                        const active = combo[g.name] === val;
+                        const enabled = avail.has(val);
+                        return (
+                          <button key={val} type="button" className={`attr-tile ${active ? "active" : ""}`} disabled={!enabled && !active}
+                            onClick={() => setCombo(c => active ? { ...c, [g.name]: undefined } : { ...c, [g.name]: val })}>
+                            {val}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="pdp-price" style={{ marginTop: 8 }}>
+                {!allSelected
+                  ? <><span className="text-sm text-muted">od </span>{fmt(minVariantPrice(product))}<div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
+                  : matched
+                    ? <>
+                        {discount > 0
+                          ? <><span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(varPrice)}</span>{" "}{fmt(varDisc)}<div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — oszczędzasz {fmt(varPrice - varDisc)}</div></>
+                          : fmt(varPrice)}
+                        {matched.sku && <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>SKU: {matched.sku}{matched.weight ? ` · waga: ${matched.weight} kg` : ""}</div>}
+                      </>
+                    : <span style={{ color: "var(--danger)", fontSize: "1rem" }}>Ta kombinacja jest niedostępna</span>}
+              </div>
+
+              <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || product.stock === 0}
+                onClick={() => onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: matched.price, sku: matched.sku, weight: matched.weight })}>
+                {product.stock === 0 ? "Brak w magazynie" : !allSelected ? "Wybierz opcje powyżej" : !matched ? "Kombinacja niedostępna" : "🛒 Dodaj do koszyka"}
+              </button>
+            </>
+          ) : (
+            <>
+              {multi && (
+                <div className="form-group" style={{ maxWidth: 360 }}>
+                  <label className="form-label">Opcja pakowania</label>
+                  <select className="form-select" value={selOptId || opts[0].id} onChange={e => setSelOptId(e.target.value)}>
+                    {opts.map(o => <option key={o.id} value={o.id}>{optLabel(o)} — {fmt(o.price)}{o.weight ? ` · ${o.weight} kg` : ""}</option>)}
+                  </select>
+                </div>
+              )}
+
+              <div className="pdp-price">
+                {promo ? (
+                  <>
+                    <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(product.price)}</span>{" "}
+                    {fmt(discount > 0 ? discountedPrice : base)}
+                    <span className="promo-badge">Promocja</span>
+                    {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 w tym Twój rabat {discount}%</div>}
+                    <div className="omnibus-note" style={{ fontSize: ".85rem" }}>Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>
+                  </>
+                ) : (discount > 0 ? (
+                  <>
+                    <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(base)}</span>{" "}
+                    {fmt(discountedPrice)}
+                    <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — oszczędzasz {fmt(base - discountedPrice)}</div>
+                  </>
+                ) : fmt(base))}
+              </div>
+
+              <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{sel.weight ? ` · waga opcji: ${sel.weight} kg` : ""}</p>
+
+              <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} onClick={() => onAdd(product, sel)} disabled={product.stock === 0}>
+                {product.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
+              </button>
+            </>
           )}
-
-          <div className="pdp-price">
-            {promo ? (
-              <>
-                <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(product.price)}</span>{" "}
-                {fmt(discount > 0 ? discountedPrice : base)}
-                <span className="promo-badge">Promocja</span>
-                {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 w tym Twój rabat {discount}%</div>}
-                <div className="omnibus-note" style={{ fontSize: ".85rem" }}>Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>
-              </>
-            ) : (discount > 0 ? (
-              <>
-                <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(base)}</span>{" "}
-                {fmt(discountedPrice)}
-                <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — oszczędzasz {fmt(base - discountedPrice)}</div>
-              </>
-            ) : fmt(base))}
-          </div>
-
-          <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{sel.weight ? ` · waga opcji: ${sel.weight} kg` : ""}</p>
-
-          <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} onClick={() => onAdd(product, sel)} disabled={product.stock === 0}>
-            {product.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
-          </button>
 
           {product.longDescription && (
             <>
@@ -2260,7 +2357,7 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", options: [] });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", options: [], attributeGroups: [], variants: [] });
   const [newCat, setNewCat] = useState("");
   const [newUnitValue, setNewUnitValue] = useState("");
   const [newUnitLabel, setNewUnitLabel] = useState("");
@@ -2279,12 +2376,14 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     reader.readAsDataURL(file);
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", options: [] }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", options: [], attributeGroups: [], variants: [] }); setEditItem(null); setModal("product"); };
   const openEdit = (p) => {
     // Pierwsza opcja (domyślna) trafia do pól podstawowych, pozostałe do edytora opcji.
     const allOpts = Array.isArray(p.options) ? p.options : [];
     const extra = allOpts.slice(1).map(o => ({ id: o.id, name: o.name || "", price: String(o.price ?? ""), sku: o.sku || "", weight: String(o.weight ?? "") }));
-    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], options: extra });
+    const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
+    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? "") })) : [];
+    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], options: extra, attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
   const save = async () => {
@@ -2308,20 +2407,42 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     }
     const packagingOptions = [defaultOpt, ...extraOpts];
 
+    // Warianty (styl Allegro): grupy atrybutów + kombinacje z ceną.
+    const cleanGroups = (form.attributeGroups || [])
+      .map(g => ({ id: g.id, name: (g.name || "").trim(), values: (g.values || []).map(v => String(v).trim()).filter(Boolean) }))
+      .filter(g => g.name && g.values.length);
+    let cleanVariants = [];
+    if (cleanGroups.length) {
+      for (let i = 0; i < (form.variants || []).length; i++) {
+        const v = form.variants[i];
+        const price = +v.price || 0;
+        const combo = {};
+        for (const g of cleanGroups) {
+          const val = v.combo?.[g.name];
+          if (!val) return showAlert(`Wariant ${i + 1}: wybierz wartość dla „${g.name}”`, "danger");
+          combo[g.name] = val;
+        }
+        if (price <= 0) return showAlert(`Wariant ${i + 1}: cena musi być większa od 0`, "danger");
+        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0 });
+      }
+    }
+
     const payload = {
       sku: form.sku, name: form.name, category: form.category, subcategory: form.subcategory,
       description: form.description, price: +form.price, promo_price: promoVal, stock: +form.stock, weight: +form.weight || 0,
       unit: form.unit, image: form.image, photo: form.photo,
       long_description: form.longDescription, specs: form.specs,
       packaging_options: packagingOptions,
+      attribute_groups: cleanGroups,
+      variants: cleanVariants,
     };
     try {
       if (editItem) {
         const updated = await api.updateProduct(editItem.id, payload);
-        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, options: packagingOptions } : p));
+        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, options: packagingOptions, attributeGroups: cleanGroups, variants: cleanVariants } : p));
       } else {
         const created = await api.addProduct(payload);
-        setProducts(prev => [...prev, { ...form, id: created.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, options: packagingOptions }]);
+        setProducts(prev => [...prev, { ...form, id: created.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, options: packagingOptions, attributeGroups: cleanGroups, variants: cleanVariants }]);
       }
       showAlert(editItem ? "Produkt zaktualizowany" : "Produkt dodany"); setModal(null);
     } catch (err) {
@@ -2595,6 +2716,64 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                       <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, options: f.options.filter((_, j) => j !== i) }))}>🗑️</button>
                     </div>
                   ))}
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, marginTop: 6 }}>
+                <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                  <label className="form-label" style={{ marginBottom: 0, fontWeight: 600 }}>🧩 Warianty (np. długość, średnica)</label>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, attributeGroups: [...(f.attributeGroups || []), { id: `g_${Date.now()}`, name: "", values: [] }] }))}>+ Dodaj grupę</button>
+                </div>
+                <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 10 }}>Najpierw zdefiniuj grupy i ich wartości (kafelki), potem dodaj warianty z ceną dla konkretnych kombinacji. Zostaw puste, jeśli produkt nie ma wariantów.</p>
+
+                {/* Edytor grup atrybutów */}
+                {(form.attributeGroups || []).map((g, gi) => (
+                  <div key={g.id || gi} style={{ background: "#f8fafc", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                    <div className="flex gap-2 items-center" style={{ marginBottom: 8 }}>
+                      <input className="form-input" style={{ flex: 1 }} placeholder="Nazwa grupy (np. Długość)" value={g.name}
+                        onChange={e => setForm(f => { const ag = [...f.attributeGroups]; ag[gi] = { ...ag[gi], name: e.target.value }; return { ...f, attributeGroups: ag }; })} />
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, attributeGroups: f.attributeGroups.filter((_, j) => j !== gi) }))}>🗑️ grupa</button>
+                    </div>
+                    <div className="flex gap-2 items-center" style={{ flexWrap: "wrap", marginBottom: 6 }}>
+                      {(g.values || []).map((val, vi) => (
+                        <span key={vi} className="badge badge-blue" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          {val}
+                          <span style={{ cursor: "pointer", fontWeight: 700 }} onClick={() => setForm(f => { const ag = [...f.attributeGroups]; ag[gi] = { ...ag[gi], values: ag[gi].values.filter((_, j) => j !== vi) }; return { ...f, attributeGroups: ag }; })}>×</span>
+                        </span>
+                      ))}
+                      {(g.values || []).length === 0 && <span className="text-sm text-muted">Brak wartości — dodaj poniżej</span>}
+                    </div>
+                    <input className="form-input" placeholder="Wpisz wartość i naciśnij Enter (np. 40 mm)"
+                      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); const val = e.target.value.trim(); if (val) { setForm(f => { const ag = [...f.attributeGroups]; if (!ag[gi].values.includes(val)) ag[gi] = { ...ag[gi], values: [...ag[gi].values, val] }; return { ...f, attributeGroups: ag }; }); e.target.value = ""; } } }} />
+                  </div>
+                ))}
+
+                {/* Edytor wariantów */}
+                {(form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length).length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                      <label className="form-label" style={{ marginBottom: 0, fontWeight: 600 }}>Warianty (kombinacje z ceną)</label>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: `v_${Date.now()}`, combo: {}, price: "", sku: "", weight: "" }] }))}>+ Dodaj wariant</button>
+                    </div>
+                    {(form.variants || []).map((v, vi) => (
+                      <div key={v.id || vi} className="flex gap-2 items-center" style={{ marginBottom: 8, flexWrap: "wrap" }}>
+                        {(form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length).map(g => (
+                          <select key={g.id || g.name} className="form-select" style={{ flex: "1 1 110px", padding: "6px 8px" }} value={v.combo?.[g.name] || ""}
+                            onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], combo: { ...vs[vi].combo, [g.name]: e.target.value } }; return { ...f, variants: vs }; })}>
+                            <option value="">{g.name}…</option>
+                            {g.values.map(val => <option key={val} value={val}>{val}</option>)}
+                          </select>
+                        ))}
+                        <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena" value={v.price}
+                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], price: e.target.value }; return { ...f, variants: vs }; })} />
+                        <input className="form-input" style={{ flex: "1 1 70px" }} placeholder="SKU" value={v.sku}
+                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], sku: e.target.value }; return { ...f, variants: vs }; })} />
+                        <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="0.001" min="0" placeholder="Waga" value={v.weight}
+                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], weight: e.target.value }; return { ...f, variants: vs }; })} />
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== vi) }))}>🗑️</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 mt-4">
