@@ -630,6 +630,49 @@ export default function App() {
     setPage("product-detail");
   };
 
+  // Wczytanie zamówień z bazy przy wejściu na panel "Zamówienia"/"Moje zamówienia".
+  // Admin widzi wszystkie, klient tylko swoje (RLS). Mapuje pola z bazy
+  // (snake_case) na format używany przez interfejs (camelCase). Zastępuje
+  // listę sesyjną danymi z bazy, więc widoczne są też historyczne zamówienia.
+  useEffect(() => {
+    if (page !== "orders" || isGuest || !currentUser?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const dbOrders = await api.fetchOrders(currentUser.id, isAdmin);
+        if (cancelled) return;
+        const mapped = (dbOrders || []).map(o => ({
+          id: o.id,
+          date: o.created_at ? new Date(o.created_at).toLocaleDateString("pl-PL") : "",
+          user: o.delivery_name || o.guest_email || "Klient",
+          userId: o.user_id,
+          guestEmail: o.guest_email,
+          items: o.items || [],
+          subtotal: Number(o.subtotal) || 0,
+          discount: o.discount || 0,
+          discountAmt: Number(o.discount_amt) || 0,
+          shipmentType: o.shipment_type,
+          shipmentLabel: o.shipment_label,
+          shippingCost: Number(o.shipping_cost) || 0,
+          freeShipping: o.free_shipping,
+          total: Number(o.total) || 0,
+          paymentMethod: o.payment_method,
+          paymentStatus: o.payment_status,
+          status: o.status,
+          deliveryCompany: o.delivery_company,
+          deliveryName: o.delivery_name,
+          deliveryPhone: o.delivery_phone,
+          deliveryAddress: o.delivery_address,
+          deliveryNip: o.delivery_nip,
+        }));
+        setOrders(mapped);
+      } catch (err) {
+        console.warn("Nie udało się wczytać zamówień z bazy:", err.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [page, currentUser?.id, isAdmin, isGuest]);
+
   const addToCart = (p) => {
     // Do koszyka trafia cena efektywna (promocyjna, jeśli aktywna). Rabat
     // klienta naliczany jest dalej od sumy koszyka. regularPrice zachowujemy
