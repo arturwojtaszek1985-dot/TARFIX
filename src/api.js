@@ -204,6 +204,14 @@ export async function fetchOrders(userId, isAdmin) {
   return data;
 }
 
+// Zmiana statusu zamówienia (tylko admin — pilnuje tego polityka RLS "Admin
+// zarządza zamówieniami" na UPDATE). status: Przyjęte / W realizacji /
+// Zrealizowane / Anulowane.
+export async function updateOrderStatus(orderId, status) {
+  const { error } = await supabase.from("orders").update({ status }).eq("id", orderId);
+  if (error) throw error;
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // USTAWIENIA SKLEPU (np. dane kontaktowe) — przechowywane jako pary klucz/wartość
 // ════════════════════════════════════════════════════════════════════════
