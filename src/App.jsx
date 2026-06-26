@@ -824,7 +824,7 @@ export default function App() {
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
           {page === "users" && isAdmin && <AdminUsers showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} currentUser={currentUser} />}
-          {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} isAdmin={isAdmin} units={units} contactInfo={contactInfo} />}
+          {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} setOrders={setOrders} isAdmin={isAdmin} units={units} contactInfo={contactInfo} showAlert={showAlert} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
         </main>
       </div>
@@ -2834,13 +2834,67 @@ function generateOrderPDF(order, contactInfo, units) {
 }
 
 
-function OrdersPage({ orders, isAdmin, units, contactInfo }) {
+const ORDER_STATUSES = ["Przyjęte", "W realizacji", "Zrealizowane", "Anulowane"];
+const statusBadgeClass = (s) =>
+  s === "Zrealizowane" ? "badge-green"
+  : s === "Anulowane" ? "badge-red"
+  : s === "W realizacji" ? "badge-blue"
+  : "badge-yellow";
+
+function OrdersPage({ orders, setOrders, isAdmin, units, contactInfo, showAlert }) {
+  const [filter, setFilter] = useState("active"); // active | done | cancelled | all
+  const [updatingId, setUpdatingId] = useState(null);
+
+  const changeStatus = async (orderId, status) => {
+    setUpdatingId(orderId);
+    try {
+      await api.updateOrderStatus(orderId, status);
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+      showAlert("Status zamówienia zaktualizowany");
+    } catch (err) {
+      showAlert("Nie udało się zmienić statusu: " + err.message, "danger");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const isActive = (s) => s === "Przyjęte" || s === "W realizacji";
+  const counts = {
+    active: orders.filter(o => isActive(o.status)).length,
+    done: orders.filter(o => o.status === "Zrealizowane").length,
+    cancelled: orders.filter(o => o.status === "Anulowane").length,
+    all: orders.length,
+  };
+  const visible = orders.filter(o => {
+    if (filter === "all") return true;
+    if (filter === "active") return isActive(o.status);
+    if (filter === "done") return o.status === "Zrealizowane";
+    if (filter === "cancelled") return o.status === "Anulowane";
+    return true;
+  });
+
+  const filters = [
+    { key: "active", label: "Aktywne" },
+    { key: "done", label: "Zrealizowane" },
+    { key: "cancelled", label: "Anulowane" },
+    { key: "all", label: "Wszystkie" },
+  ];
+
   return (
     <>
       <div className="page-header"><h1 className="page-title">📋 {isAdmin ? "Wszystkie zamówienia" : "Moje zamówienia"}</h1></div>
-      {orders.length === 0
-        ? <div className="empty-state"><div className="icon">📋</div>Brak zamówień</div>
-        : orders.map(o => (
+
+      <div className="flex gap-2" style={{ marginBottom: 16, flexWrap: "wrap" }}>
+        {filters.map(f => (
+          <button key={f.key} className={`btn btn-sm ${filter === f.key ? "btn-primary" : "btn-secondary"}`} onClick={() => setFilter(f.key)}>
+            {f.label} <span style={{ opacity: .7 }}>({counts[f.key]})</span>
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0
+        ? <div className="empty-state"><div className="icon">📋</div>Brak zamówień w tym widoku</div>
+        : visible.map(o => (
           <div key={o.id} className="card" style={{ marginBottom: 14 }}>
             <div className="flex items-center gap-3" style={{ marginBottom: 10, flexWrap: "wrap" }}>
               <span className="font-bold">#{o.id.toString().slice(-6)}</span>
@@ -2849,9 +2903,21 @@ function OrdersPage({ orders, isAdmin, units, contactInfo }) {
               {o.paymentMethod && <span className="badge badge-blue">💳 {o.paymentMethod}</span>}
               {o.paymentStatus && <span className={`badge ${o.paymentStatus === "Opłacone" ? "badge-green" : "badge-yellow"}`}>{o.paymentStatus === "Opłacone" ? "✅" : "⏳"} {o.paymentStatus}</span>}
               {o.shipmentLabel && <span className="badge badge-gray">{o.shipmentType === "packages" ? "📦" : "🪵"} {o.shipmentLabel}</span>}
-              <span className="badge badge-green">{o.status}</span>
+              <span className={`badge ${statusBadgeClass(o.status)}`}>{o.status}</span>
               <button className="btn btn-secondary btn-sm ml-auto" onClick={() => generateOrderPDF(o, contactInfo, units)}>📄 PDF</button>
             </div>
+
+            {isAdmin && (
+              <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
+                <span className="text-sm text-muted">Status:</span>
+                <select className="form-select" style={{ maxWidth: 200, padding: "5px 8px" }} value={o.status} disabled={updatingId === o.id}
+                  onChange={e => changeStatus(o.id, e.target.value)}>
+                  {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                {updatingId === o.id && <span className="text-sm text-muted">zapisywanie…</span>}
+              </div>
+            )}
+
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Produkt</th><th>Cena</th><th>Ilość</th><th>Suma</th></tr></thead>
