@@ -771,7 +771,7 @@ export default function App() {
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
-          {page === "users" && isAdmin && <AdminUsers users={users} setUsers={setUsers} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
+          {page === "users" && isAdmin && <AdminUsers showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} currentUser={currentUser} />}
           {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} isAdmin={isAdmin} units={units} contactInfo={contactInfo} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
         </main>
@@ -2521,55 +2521,96 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
 }
 
 // ── ADMIN KLIENCI ─────────────────────────────────────────────────────────────
-function AdminUsers({ users, setUsers, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "customer", discount: "0" });
-  const openEdit = (u) => { setForm({ ...u, discount: String(u.discount) }); setEditItem(u); setModal("user"); };
-  const openAdd = () => { setForm({ name: "", email: "", password: "", role: "customer", discount: "0" }); setEditItem(null); setModal("user"); };
-  const save = () => {
-    if (!form.name || !form.email) return showAlert("Wypełnij wymagane pola", "danger");
-    if (editItem) setUsers(prev => prev.map(u => u.id === editItem.id ? { ...form, id: editItem.id, discount: +form.discount } : u));
-    else setUsers(prev => [...prev, { ...form, id: Date.now(), discount: +form.discount }]);
-    showAlert(editItem ? "Klient zaktualizowany" : "Klient dodany"); setModal(null);
+function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, currentUser }) {
+  const [profiles, setProfiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ role: "customer", discount: "0" });
+  const [saving, setSaving] = useState(false);
+
+  // Ładowanie listy klientów z bazy (tabela profiles) przy wejściu na panel.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.fetchProfiles();
+        if (!cancelled) setProfiles(data || []);
+      } catch (err) {
+        if (!cancelled) showAlert("Nie udało się wczytać klientów: " + err.message, "danger");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const openEdit = (u) => { setForm({ role: u.role || "customer", discount: String(u.discount ?? 0) }); setEditItem(u); setModal("user"); };
+
+  const save = async () => {
+    if (!editItem) return;
+    const newDiscount = Math.max(0, Math.min(100, +form.discount || 0));
+    const isSelf = editItem.id === currentUser?.id;
+    // Zabezpieczenie: nie pozwalamy odebrać roli admina samemu sobie
+    // (inaczej można się zablokować poza panelem).
+    const newRole = isSelf ? editItem.role : form.role;
+    setSaving(true);
+    try {
+      await api.updateProfileDiscount(editItem.id, newDiscount);
+      if (!isSelf && form.role !== editItem.role) {
+        await api.updateProfileRole(editItem.id, form.role);
+      }
+      setProfiles(prev => prev.map(p => p.id === editItem.id ? { ...p, discount: newDiscount, role: newRole } : p));
+      showAlert("Dane klienta zaktualizowane");
+      setModal(null);
+    } catch (err) {
+      showAlert("Nie udało się zapisać zmian: " + err.message, "danger");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const editingSelf = editItem && editItem.id === currentUser?.id;
+
   return (
     <>
-      <div className="page-header"><h1 className="page-title">👥 Klienci</h1><button className="btn btn-primary" onClick={openAdd}>+ Dodaj klienta</button></div>
+      <div className="page-header"><h1 className="page-title">👥 Klienci</h1></div>
       <div className="stats-grid">
-        <div className="stat-card"><div className="stat-value">{users.filter(u => u.role === "customer").length}</div><div className="stat-label">Klientów</div></div>
-        <div className="stat-card"><div className="stat-value">{users.filter(u => u.discount > 0).length}</div><div className="stat-label">Z rabatem</div></div>
+        <div className="stat-card"><div className="stat-value">{profiles.length}</div><div className="stat-label">Wszystkich kont</div></div>
+        <div className="stat-card"><div className="stat-value">{profiles.filter(u => u.role === "customer").length}</div><div className="stat-label">Klientów</div></div>
+        <div className="stat-card"><div className="stat-value">{profiles.filter(u => (u.discount || 0) > 0).length}</div><div className="stat-label">Z rabatem</div></div>
       </div>
       <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Klient</th><th>Email</th><th>Rola</th><th>Rabat</th><th>Akcje</th></tr></thead>
-            <tbody>{users.map(u => (
-              <tr key={u.id}>
-                <td><strong>{u.name}</strong></td>
-                <td className="text-muted">{u.email}</td>
-                <td><span className={`badge ${u.role === "admin" ? "badge-orange" : "badge-blue"}`}>{u.role === "admin" ? "🔧 Admin" : "👤 Klient"}</span></td>
-                <td>{u.discount > 0 ? <span className="badge badge-green">🎉 {u.discount}%</span> : <span className="badge badge-gray">Brak</span>}</td>
-                <td><button className="btn btn-secondary btn-sm" onClick={() => openEdit(u)}>✏️ Edytuj rabat</button></td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
+        {loading ? <div className="empty-state"><div className="icon">⏳</div>Wczytywanie klientów…</div>
+          : profiles.length === 0 ? <div className="empty-state"><div className="icon">👥</div>Brak zarejestrowanych klientów. Konta pojawią się tu automatycznie po rejestracji w sklepie.</div>
+          : <div className="table-wrap">
+            <table>
+              <thead><tr><th>Klient</th><th>Email</th><th>Rola</th><th>Rabat</th><th>Akcje</th></tr></thead>
+              <tbody>{profiles.map(u => (
+                <tr key={u.id}>
+                  <td><strong>{u.name || "—"}</strong>{u.id === currentUser?.id && <span className="badge badge-gray" style={{ marginLeft: 6 }}>To Ty</span>}</td>
+                  <td className="text-muted">{u.email}</td>
+                  <td><span className={`badge ${u.role === "admin" ? "badge-orange" : "badge-blue"}`}>{u.role === "admin" ? "🔧 Admin" : "👤 Klient"}</span></td>
+                  <td>{(u.discount || 0) > 0 ? <span className="badge badge-green">🎉 {u.discount}%</span> : <span className="badge badge-gray">Brak</span>}</td>
+                  <td><button className="btn btn-secondary btn-sm" onClick={() => openEdit(u)}>✏️ Edytuj</button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>}
       </div>
-      {modal === "user" && (
+      {modal === "user" && editItem && (
         <div className="modal-bg">
           <div className="modal">
-            <div className="modal-header"><h2 className="modal-title">{editItem ? "Edytuj klienta" : "Nowy klient"}</h2><button className="close-btn" onClick={() => setModal(null)}>✕</button></div>
+            <div className="modal-header"><h2 className="modal-title">Edytuj klienta</h2><button className="close-btn" onClick={() => setModal(null)}>✕</button></div>
             <div className="modal-body">
-              <div className="form-group"><label className="form-label">Imię i nazwisko *</label><input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
-              <div className="form-group"><label className="form-label">Email *</label><input className="form-input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-              <div className="form-group"><label className="form-label">Hasło</label><input className="form-input" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Klient</label><input className="form-input" value={`${editItem.name || "—"} (${editItem.email})`} disabled style={{ background: "#f8fafc" }} /></div>
               <div className="flex gap-3">
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Rola</label>
-                  <select className="form-select" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}><option value="customer">Klient</option><option value="admin">Admin</option></select>
+                  <select className="form-select" value={editingSelf ? editItem.role : form.role} disabled={editingSelf} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}><option value="customer">Klient</option><option value="admin">Admin</option></select>
+                  {editingSelf && <div className="text-sm text-muted" style={{ marginTop: 4 }}>Nie możesz zmienić własnej roli.</div>}
                 </div>
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Rabat (%)</label><input className="form-input" type="number" min="0" max="100" value={form.discount} onChange={e => setForm(f => ({ ...f, discount: e.target.value }))} /></div>
               </div>
               <div className="flex gap-3 mt-4">
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>💾 {editItem ? "Zapisz" : "Dodaj"}</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={save} disabled={saving}>💾 {saving ? "Zapisywanie…" : "Zapisz"}</button>
                 <button className="btn btn-secondary" onClick={() => setModal(null)}>Anuluj</button>
               </div>
             </div>
