@@ -658,6 +658,7 @@ export default function App() {
 
   const placeOrder = async (paymentMethod, paymentStatus, guestInfo) => {
     if (!cart.length) return;
+    const delivery = guestInfo?.delivery || {};
     const newOrder = {
       id: Date.now(), user: currentUser.name, userId: isGuest ? null : currentUser.id,
       guestEmail: guestInfo?.email || null,
@@ -665,6 +666,9 @@ export default function App() {
       shipmentType: shipment.type, shipmentLabel: shipment.label, shippingCost, freeShipping,
       total: cartTotal, date: new Date().toLocaleDateString("pl-PL"),
       status: "Przyjęte", paymentMethod, paymentStatus,
+      deliveryCompany: delivery.company || null, deliveryName: delivery.name || null,
+      deliveryPhone: delivery.phone || null, deliveryAddress: delivery.address || null,
+      deliveryNip: delivery.nip || null,
     };
 
     // Zapis zamówienia do bazy danych — jeśli się nie powiedzie, zamówienie
@@ -685,6 +689,11 @@ export default function App() {
         payment_method: newOrder.paymentMethod,
         payment_status: newOrder.paymentStatus,
         status: newOrder.status,
+        delivery_company: newOrder.deliveryCompany,
+        delivery_name: newOrder.deliveryName,
+        delivery_phone: newOrder.deliveryPhone,
+        delivery_address: newOrder.deliveryAddress,
+        delivery_nip: newOrder.deliveryNip,
       });
     } catch (err) {
       console.error("Nie udało się zapisać zamówienia w bazie:", err.message);
@@ -1142,6 +1151,8 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
   const [blik, setBlik] = useState(["", "", "", "", "", ""]);
   const [guestEmail, setGuestEmail] = useState("");
   const [guestEmailErr, setGuestEmailErr] = useState("");
+  const [delivery, setDelivery] = useState({ company: "", name: "", phone: "", address: "", nip: "" });
+  const [deliveryErr, setDeliveryErr] = useState("");
   const blikRefs = useRef([]);
 
   const methods = [
@@ -1161,9 +1172,11 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
   };
 
   const guestEmailValid = !isGuest || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail);
+  const deliveryValid = delivery.name.trim() && delivery.phone.trim() && delivery.address.trim();
 
   const canSubmit = () => {
     if (!guestEmailValid) return false;
+    if (!deliveryValid) return false;
     if (method === "cod") return true;
     if (method === "blik") return blik.every(d => d !== "");
     if (method === "card") return card.number.replace(/\s/g, "").length === 16 && card.expiry.length === 5 && card.cvc.length >= 3 && card.name.trim();
@@ -1173,14 +1186,15 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
 
   const submit = () => {
     if (isGuest && !guestEmailValid) { setGuestEmailErr("Podaj poprawny adres e-mail."); return; }
-    const guestInfo = isGuest ? { email: guestEmail } : null;
-    if (method === "cod") return onComplete("Za pobraniem", "Do zapłaty przy odbiorze", guestInfo);
+    if (!deliveryValid) { setDeliveryErr("Uzupełnij dane do dostawy: osoba kontaktowa, telefon i adres."); return; }
+    const info = { email: isGuest ? guestEmail : null, delivery };
+    if (method === "cod") return onComplete("Za pobraniem", "Do zapłaty przy odbiorze", info);
     setStage("processing");
     setTimeout(() => {
       setStage("success");
       setTimeout(() => {
         const labelMap = { card: "Karta płatnicza", blik: "BLIK", transfer: "Przelew online" };
-        onComplete(labelMap[method], "Opłacone", guestInfo);
+        onComplete(labelMap[method], "Opłacone", info);
       }, 1200);
     }, 1800);
   };
@@ -1226,6 +1240,36 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
                   {guestEmailErr && <p className="text-sm" style={{ color: "var(--danger)", marginTop: 4 }}>{guestEmailErr}</p>}
                 </div>
               )}
+
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, marginTop: 4, marginBottom: 6 }}>
+                <p className="form-label" style={{ fontWeight: 600, marginBottom: 10 }}>🚚 Dane do dostawy</p>
+                <div className="form-group">
+                  <label className="form-label">Nazwa firmy</label>
+                  <input className="form-input" placeholder="opcjonalnie" value={delivery.company}
+                    onChange={e => setDelivery(d => ({ ...d, company: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Osoba kontaktowa *</label>
+                  <input className="form-input" placeholder="Imię i nazwisko" value={delivery.name}
+                    onChange={e => { setDelivery(d => ({ ...d, name: e.target.value })); setDeliveryErr(""); }} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Telefon *</label>
+                  <input className="form-input" type="tel" placeholder="np. 600 100 200" value={delivery.phone}
+                    onChange={e => { setDelivery(d => ({ ...d, phone: e.target.value })); setDeliveryErr(""); }} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Adres dostawy *</label>
+                  <input className="form-input" placeholder="ulica, nr, kod pocztowy, miejscowość" value={delivery.address}
+                    onChange={e => { setDelivery(d => ({ ...d, address: e.target.value })); setDeliveryErr(""); }} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">NIP (do faktury)</label>
+                  <input className="form-input" placeholder="opcjonalnie" value={delivery.nip}
+                    onChange={e => setDelivery(d => ({ ...d, nip: e.target.value }))} />
+                </div>
+                {deliveryErr && <p className="text-sm" style={{ color: "var(--danger)", marginTop: 2 }}>{deliveryErr}</p>}
+              </div>
 
               <p className="form-label mb-3">Wybierz metodę płatności:</p>
               <div className="pay-methods">
@@ -2669,6 +2713,20 @@ function generateOrderPDF(order, contactInfo, units) {
   if (order.guestEmail) { y += 5; doc.text(pdfText(order.guestEmail), marginX, y); }
   y += 9;
 
+  // Dane do dostawy (jeśli podane przy zamówieniu)
+  if (order.deliveryName || order.deliveryAddress || order.deliveryCompany) {
+    doc.setFont("helvetica", "bold");
+    doc.text(pdfText("Dostawa do:"), marginX, y);
+    doc.setFont("helvetica", "normal");
+    y += 5;
+    if (order.deliveryCompany) { doc.text(pdfText(order.deliveryCompany), marginX, y); y += 5; }
+    if (order.deliveryName) { doc.text(pdfText(order.deliveryName), marginX, y); y += 5; }
+    if (order.deliveryAddress) { doc.text(pdfText(order.deliveryAddress), marginX, y); y += 5; }
+    if (order.deliveryPhone) { doc.text(pdfText(`Tel: ${order.deliveryPhone}`), marginX, y); y += 5; }
+    if (order.deliveryNip) { doc.text(pdfText(`NIP: ${order.deliveryNip}`), marginX, y); y += 5; }
+    y += 4;
+  }
+
   // Tabela pozycji zamówienia — nagłówek
   const colX = { name: marginX, price: marginX + 95, qty: marginX + 125, sum: pageWidth - marginX };
   doc.setFont("helvetica", "bold");
@@ -2758,6 +2816,15 @@ function OrdersPage({ orders, isAdmin, units, contactInfo }) {
               </table>
 
             </div>
+            {(o.deliveryName || o.deliveryAddress || o.deliveryCompany) && (
+              <div style={{ marginTop: 10, padding: "10px 12px", background: "#f8fafc", borderRadius: 8, fontSize: ".85rem", lineHeight: 1.6 }}>
+                <strong>🚚 Dostawa:</strong>{" "}
+                {o.deliveryCompany ? `${o.deliveryCompany}, ` : ""}{o.deliveryName}
+                {o.deliveryAddress ? ` — ${o.deliveryAddress}` : ""}
+                {o.deliveryPhone ? ` · tel. ${o.deliveryPhone}` : ""}
+                {o.deliveryNip ? ` · NIP ${o.deliveryNip}` : ""}
+              </div>
+            )}
             <div style={{ marginTop: 10, textAlign: "right", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
               {o.discount > 0 && <span className="text-sm" style={{ color: "var(--success)", marginRight: 12 }}>Rabat {o.discount}%: −{fmt(o.discountAmt)}</span>}
               <span className="text-sm text-muted" style={{ marginRight: 12 }}>
