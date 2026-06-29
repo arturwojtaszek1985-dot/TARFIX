@@ -211,6 +211,39 @@ const parseProductId = (path) => {
 };
 const parseNum = (s) => parseFloat(String(s).replace(",", ".").replace(/\s/g, "")) || 0;
 
+// ── IMPORT WARIANTÓW: helpery ───────────────────────────────────────────────
+// Wyznacza klucz grupujący z SKU wg wybranej reguły.
+const skuPrefix = (sku, rule, n) => {
+  const s = String(sku || "").trim();
+  if (!s) return "";
+  if (rule === "first") { const i = s.indexOf("-"); return i > 0 ? s.slice(0, i) : s; }
+  if (rule === "chars") { return s.slice(0, Math.max(1, +n || 3)); }
+  // domyślnie: do ostatniego myślnika (np. WKR-CIES-6x40 -> WKR-CIES)
+  const i = s.lastIndexOf("-");
+  return i > 0 ? s.slice(0, i) : s;
+};
+// Wyciąga rozmiar typu „6x40”, „4,2x19”, „M8x80” z nazwy. Zwraca znormalizowany token albo null.
+const extractSize = (name) => {
+  const m = String(name || "").match(/(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
+  if (m) return `${m[1].replace(",", ".")}x${m[2].replace(",", ".")}`;
+  // sam wymiar gwintu/średnicy: M8, Ø6, fi6
+  const m2 = String(name || "").match(/\b([MØ]\s?\d+(?:[.,]\d+)?)\b/i);
+  if (m2) return m2[1].replace(/\s/g, "").replace(",", ".");
+  return null;
+};
+// Najdłuższy wspólny przedrostek listy napisów (do bazowej nazwy produktu).
+const longestCommonPrefix = (arr) => {
+  if (!arr.length) return "";
+  let p = arr[0];
+  for (const s of arr.slice(1)) {
+    let i = 0;
+    while (i < p.length && i < s.length && p[i] === s[i]) i++;
+    p = p.slice(0, i);
+    if (!p) break;
+  }
+  return p.replace(/[\s\-–,.:x×]+$/i, "").trim();
+};
+
 // ── Style ─────────────────────────────────────────────────────────────────────
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -2516,6 +2549,12 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
   const [detectedEncoding, setDetectedEncoding] = useState(null);
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingNewUnits, setPendingNewUnits] = useState([]);
+  const [variantMode, setVariantMode] = useState(false);
+  const [prefixRule, setPrefixRule] = useState("last"); // last / first / chars
+  const [prefixN, setPrefixN] = useState(3);
+  const [attrName, setAttrName] = useState("Rozmiar");
+  const [priceType, setPriceType] = useState("netto"); // netto / brutto (ceny w pliku)
+  const [grouped, setGrouped] = useState([]); // produkty z wariantami (podgląd)
   const fileRef = useRef();
 
   const FIELDS = [
@@ -2643,6 +2682,104 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
     setStep(3);
   };
 
+  // ── TRYB WARIANTÓW: grupowanie wierszy w produkty z wariantami ──────────────
+  const buildVariantPreview = () => {
+    if (!rawData) return;
+    const newUnitsFound = new Map();
+    const groupsMap = new Map(); // key -> rows[]
+    rawData.forEach(row => {
+      const sku = String(row[mapping.sku] || "").trim();
+      const name = String(row[mapping.name] || "").trim();
+      if (!sku || !name) return;
+      const key = skuPrefix(sku, prefixRule, prefixN);
+      if (!groupsMap.has(key)) groupsMap.set(key, []);
+      groupsMap.get(key).push(row);
+    });
+
+    const out = [];
+    for (const [key, rows] of groupsMap.entries()) {
+      const names = rows.map(r => String(r[mapping.name] || "").trim());
+      const baseName = longestCommonPrefix(names) || names[0] || key;
+      const category = String(rows[0][mapping.category] || "Inne").trim();
+      const description = String(rows[0][mapping.description] || "").trim();
+      const unitRaw = mapping.unit ? rows[0][mapping.unit] : "";
+      const resolvedUnit = resolveUnit(unitRaw);
+      if (resolvedUnit.isNew) newUnitsFound.set(resolvedUnit.value, resolvedUnit.label);
+
+      const variants = rows.map((r, i) => {
+        const rname = String(r[mapping.name] || "").trim();
+        const rsku = String(r[mapping.sku] || "").trim();
+        const priceRaw = parseNum(r[mapping.price]);
+        const net = priceType === "brutto" ? netOf(priceRaw) : priceRaw;
+        const stock = Math.round(parseNum(r[mapping.stock]));
+        // rozmiar: z nazwy, a jeśli się nie uda — fragment nazwy po wspólnym przedrostku, na końcu SKU
+        let size = extractSize(rname);
+        if (!size && baseName && rname.startsWith(baseName)) size = rname.slice(baseName.length).replace(/^[\s\-–,.:]+/, "").trim();
+        if (!size) { const i2 = rsku.lastIndexOf("-"); size = i2 >= 0 ? rsku.slice(i2 + 1) : `wariant ${i + 1}`; }
+        return { id: `v_${rsku || i}`, combo: { [attrName]: size }, price: net, sku: rsku, weight: 0, _stock: stock };
+      });
+
+      const values = [...new Set(variants.map(v => v.combo[attrName]))];
+      const totalStock = variants.reduce((s, v) => s + (v._stock || 0), 0);
+      const single = rows.length === 1;
+      const existing = products.find(p => p.sku === key);
+
+      out.push({
+        key, baseName, category, description, unit: resolvedUnit.value, unitIsNew: resolvedUnit.isNew,
+        single, totalStock, status: existing ? "update" : "new", existingId: existing?.id || null,
+        attributeGroups: single ? [] : [{ id: `g_${key}`, name: attrName, values }],
+        variants: single ? [] : variants.map(({ _stock, ...v }) => v),
+        singlePrice: single ? (priceType === "brutto" ? variants[0].price * (1 + VAT_RATE) : grossOf(variants[0].price)) : null,
+        minNet: variants.length ? Math.min(...variants.map(v => v.price)) : 0,
+      });
+    }
+    setGrouped(out);
+    setPendingNewUnits([...newUnitsFound.entries()].map(([value, label]) => ({ value, label })));
+    setStep(3);
+  };
+
+  const doVariantImport = async () => {
+    if (pendingNewUnits.length > 0) {
+      setUnits(prev => {
+        const existingValues = new Set(prev.map(u => u.value));
+        return [...prev, ...pendingNewUnits.filter(u => !existingValues.has(u.value))];
+      });
+    }
+    let added = 0, updated = 0;
+    try {
+      const newProds = [...products];
+      for (const g of grouped) {
+        const basePriceBrutto = g.single ? Math.round(g.singlePrice * 100) / 100 : grossOf(g.minNet);
+        const payload = {
+          sku: g.key, name: g.baseName, category: g.category, subcategory: "",
+          description: g.description, price: basePriceBrutto, promo_price: null,
+          stock: g.totalStock, weight: 0, unit: g.unit, image: getEmoji(g.category),
+          long_description: "", specs: [],
+          attribute_groups: g.attributeGroups, variants: g.variants,
+          published: false, // import do bufora — najpierw sprawdzasz, potem publikujesz
+        };
+        if (g.existingId) {
+          const upd = await api.updateProduct(g.existingId, payload);
+          const i = newProds.findIndex(p => p.id === g.existingId);
+          const mapped = { ...payload, id: g.existingId, promoPrice: null, attributeGroups: g.attributeGroups, variants: g.variants, published: false };
+          if (i >= 0) newProds[i] = { ...newProds[i], ...mapped }; updated++;
+        } else {
+          const created = await api.addProduct(payload);
+          newProds.push({ ...payload, id: created.id, promoPrice: null, attributeGroups: g.attributeGroups, variants: g.variants, published: false });
+          added++;
+        }
+      }
+      setProducts(newProds);
+    } catch (err) {
+      showAlert("Błąd zapisu do bazy danych: " + err.message, "danger");
+      return;
+    }
+    setResult({ added, updated, unchanged: 0, total: grouped.length, newUnits: pendingNewUnits.length, variant: true });
+    setLastSync({ file: fileName, imported: added + updated, time: new Date().toLocaleTimeString("pl-PL") });
+    showAlert(`✅ Import wariantów: ${added} nowych, ${updated} zaktualizowanych (w buforze — opublikuj po sprawdzeniu)`, "success");
+    setStep(4);
+  };
+
   const doImport = async () => {
     // Najpierw rejestrujemy w systemie wszystkie nowe jednostki znalezione w pliku
     if (pendingNewUnits.length > 0) {
@@ -2691,7 +2828,7 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
     setStep(4);
   };
 
-  const reset = () => { setStep(1); setRawData(null); setCsvHeaders([]); setPreview([]); setResult(null); setFileName(""); setEncoding("auto"); setDetectedEncoding(null); setPendingFile(null); setPendingNewUnits([]); };
+  const reset = () => { setStep(1); setRawData(null); setCsvHeaders([]); setPreview([]); setResult(null); setFileName(""); setEncoding("auto"); setDetectedEncoding(null); setPendingFile(null); setPendingNewUnits([]); setGrouped([]); };
 
   const downloadSample = () => {
     const blob = new Blob(["\uFEFF" + SAMPLE_CSV], { type: "text/csv;charset=utf-8;" });
@@ -2793,15 +2930,88 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
               <tbody><tr>{csvHeaders.map(h => <td key={h}>{String(rawData[0]?.[h] ?? "")}</td>)}</tr></tbody>
             </table>
           </div>
+          <div className="card" style={{ background: variantMode ? "#eff6ff" : "#f8fafc", border: `1px solid ${variantMode ? "#bfdbfe" : "var(--border)"}`, marginTop: 14 }}>
+            <label className="flex items-center gap-3" style={{ cursor: "pointer", margin: 0 }}>
+              <input type="checkbox" checked={variantMode} onChange={e => setVariantMode(e.target.checked)} style={{ width: 18, height: 18 }} />
+              <span><strong>🧩 Importuj jako warianty</strong><div className="text-sm text-muted">Grupuje wiersze po prefiksie SKU w jeden produkt z wariantami (rozmiar wyciągany z nazwy). Import trafia do bufora (szkice).</div></span>
+            </label>
+            {variantMode && (
+              <div style={{ marginTop: 12 }}>
+                <div className="mapping-row" style={{ marginBottom: 8 }}>
+                  <span className="mapping-label">Grupuj po prefiksie SKU</span>
+                  <span className="mapping-arrow">→</span>
+                  <select className="form-select" style={{ flex: 1 }} value={prefixRule} onChange={e => setPrefixRule(e.target.value)}>
+                    <option value="last">do ostatniego myślnika (WKR-CIES-6x40 → WKR-CIES)</option>
+                    <option value="first">do pierwszego myślnika (WKR-6x40 → WKR)</option>
+                    <option value="chars">pierwsze N znaków</option>
+                  </select>
+                </div>
+                {prefixRule === "chars" && (
+                  <div className="mapping-row" style={{ marginBottom: 8 }}>
+                    <span className="mapping-label">Liczba znaków (N)</span><span className="mapping-arrow">→</span>
+                    <input className="form-input" type="number" min="1" style={{ flex: 1 }} value={prefixN} onChange={e => setPrefixN(e.target.value)} />
+                  </div>
+                )}
+                <div className="mapping-row" style={{ marginBottom: 8 }}>
+                  <span className="mapping-label">Nazwa atrybutu wariantu</span><span className="mapping-arrow">→</span>
+                  <input className="form-input" style={{ flex: 1 }} value={attrName} onChange={e => setAttrName(e.target.value)} placeholder="np. Rozmiar" />
+                </div>
+                <div className="mapping-row">
+                  <span className="mapping-label">Ceny w pliku to</span><span className="mapping-arrow">→</span>
+                  <select className="form-select" style={{ flex: 1 }} value={priceType} onChange={e => setPriceType(e.target.value)}>
+                    <option value="netto">netto (warianty trzymają netto)</option>
+                    <option value="brutto">brutto (przeliczę na netto)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-3 mt-4">
-            <button className="btn btn-primary" onClick={buildPreview}>Dalej: Podgląd zmian →</button>
+            <button className="btn btn-primary" onClick={variantMode ? buildVariantPreview : buildPreview}>Dalej: Podgląd zmian →</button>
             <button className="btn btn-secondary" onClick={reset}>← Wróć</button>
           </div>
         </div>
       )}
 
       {/* KROK 3 — Podgląd */}
-      {step === 3 && (
+      {step === 3 && variantMode && (
+        <div className="card">
+          <h3 className="card-title">Podgląd grupowania — sprawdź zanim zaimportujesz</h3>
+          <div className="info-box mb-3">
+            Pogrupowano <strong>{rawData?.length || 0}</strong> wierszy w <strong>{grouped.length}</strong> {grouped.length === 1 ? "produkt" : "produktów"}.
+            Sprawdź, czy <strong>nazwy bazowe</strong> i <strong>rozmiary</strong> wyglądają poprawnie. Jeśli nie — wróć i zmień regułę prefiksu SKU.
+            Produkty trafią do <strong>bufora (szkice)</strong> — opublikujesz je po sprawdzeniu.
+          </div>
+          {pendingNewUnits.length > 0 && (
+            <div className="encoding-box" style={{ marginBottom: 14 }}>📏 Nowe jednostki do założenia: {pendingNewUnits.map(u => u.label).join(", ")}</div>
+          )}
+          <div className="preview-table-wrap" style={{ maxHeight: 420 }}>
+            <table className="preview-table">
+              <thead><tr><th>Status</th><th>SKU (grupa)</th><th>Nazwa produktu</th><th>Kategoria</th><th>Warianty ({attrName})</th><th>Stan łącznie</th></tr></thead>
+              <tbody>
+                {grouped.map((g, i) => (
+                  <tr key={i}>
+                    <td><span className={`badge ${g.status === "new" ? "badge-green" : "badge-orange"}`}>{g.status === "new" ? "nowy" : "aktualizacja"}</span></td>
+                    <td className="text-sm"><strong>{g.key}</strong></td>
+                    <td>{g.baseName}{g.single && <span className="badge badge-gray" style={{ marginLeft: 6 }}>bez wariantów</span>}</td>
+                    <td className="text-sm text-muted">{g.category}</td>
+                    <td className="text-sm">{g.single ? "—" : g.attributeGroups[0]?.values.join(", ")}</td>
+                    <td>{g.totalStock}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <button className="btn btn-primary" onClick={doVariantImport} disabled={grouped.length === 0}>✅ Importuj {grouped.length} do bufora</button>
+            <button className="btn btn-secondary" onClick={() => setStep(2)}>← Wróć do ustawień</button>
+          </div>
+        </div>
+      )}
+
+      {/* KROK 3 — Podgląd */}
+      {step === 3 && !variantMode && (
         <div className="card">
           <h3 className="card-title">Podgląd zmian</h3>
           <div className="changes-summary">
