@@ -607,6 +607,7 @@ export default function App() {
   }, []);
 
   const [currentUser, setCurrentUser] = useState({ id: "guest-initial", name: "Gość", email: null, role: "guest", discount: 0 });
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   // Przywrócenie sesji Supabase przy starcie aplikacji oraz nasłuch zmian
   // logowania (login/logout/odświeżenie tokenu). Jeśli użytkownik był
@@ -627,7 +628,9 @@ export default function App() {
       }
     })();
 
-    const unsubscribe = api.onAuthChange(async (authUser) => {
+    const unsubscribe = api.onAuthChange(async (authUser, event) => {
+      // Powrót z linku resetującego hasło — pokaż ekran ustawienia nowego hasła.
+      if (event === "PASSWORD_RECOVERY") { setRecoveryMode(true); return; }
       if (authUser) {
         const appUser = await api.buildAppUser(authUser);
         setCurrentUser(appUser);
@@ -823,6 +826,7 @@ export default function App() {
     p.name.toLowerCase().includes(searchQ.toLowerCase())
   );
 
+  if (recoveryMode) return <><style>{css}</style><RecoveryScreen showAlert={showAlert} onDone={() => { setRecoveryMode(false); setCurrentUser(null); }} /></>;
   if (!currentUser) return <><style>{css}</style><LoginPage users={users} setUsers={setUsers} onLogin={setCurrentUser} /></>;
 
   return (
@@ -974,6 +978,59 @@ export default function App() {
   );
 }
 
+// ── ODZYSKIWANIE HASŁA: ustawienie nowego hasła po kliknięciu linku z e-maila ─
+function RecoveryScreen({ showAlert, onDone }) {
+  const [pass1, setPass1] = useState("");
+  const [pass2, setPass2] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const submit = async () => {
+    setErr("");
+    if (!pass1 || !pass2) return setErr("Wypełnij oba pola.");
+    if (pass1.length < 6) return setErr("Hasło musi mieć min. 6 znaków.");
+    if (pass1 !== pass2) return setErr("Hasła nie są identyczne.");
+    setLoading(true);
+    try {
+      await api.changePassword(pass1);
+      setDone(true);
+      showAlert("Hasło zostało zmienione. Możesz się zalogować.", "success");
+    } catch (e) {
+      const msg = e?.message || "";
+      if (/should be different|same.*password/i.test(msg)) setErr("Nowe hasło musi różnić się od poprzedniego.");
+      else if (/session|not authenticated|jwt|expired/i.test(msg)) setErr("Link wygasł lub jest nieprawidłowy. Poproś o nowy link na ekranie logowania.");
+      else setErr("Nie udało się zmienić hasła: " + msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="login-title"><img src={LOGO_TARFIX} alt="TARFIX" style={{ height: 42, margin: "0 auto", display: "block" }} /></div>
+        <div className="login-sub">Ustaw nowe hasło</div>
+        {done ? (
+          <>
+            <div className="alert alert-success">✅ Hasło zostało zmienione.</div>
+            <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={onDone}>Przejdź do logowania →</button>
+          </>
+        ) : (
+          <>
+            {err && <div className="alert alert-danger">❌ {err}</div>}
+            <div className="form-group"><label className="form-label">Nowe hasło</label>
+              <input className="form-input" type="password" value={pass1} onChange={e => setPass1(e.target.value)} placeholder="min. 6 znaków" /></div>
+            <div className="form-group"><label className="form-label">Powtórz nowe hasło</label>
+              <input className="form-input" type="password" value={pass2} onChange={e => setPass2(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} placeholder="••••••••" /></div>
+            <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={submit} disabled={loading}>{loading ? "Zapisywanie…" : "Zapisz nowe hasło"}</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── LOGOWANIE ─────────────────────────────────────────────────────────────────
 function LoginPage({ users, setUsers, onLogin }) {
   const [tab, setTab] = useState("login"); // login | register
@@ -981,6 +1038,8 @@ function LoginPage({ users, setUsers, onLogin }) {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetInfo, setResetInfo] = useState("");
 
   const [regName, setRegName] = useState("");
   const [regEmail, setRegEmail] = useState("");
@@ -1038,6 +1097,21 @@ function LoginPage({ users, setUsers, onLogin }) {
     onLogin({ id: "guest-" + Date.now(), name: "Gość", email: null, role: "guest", discount: 0 });
   };
 
+  const handleReset = async () => {
+    setErr(""); setResetInfo("");
+    if (!email.trim()) return setErr("Podaj adres e-mail konta.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr("Podaj poprawny adres e-mail.");
+    setLoading(true);
+    try {
+      await api.sendPasswordReset(email.trim());
+      setResetInfo("Jeśli konto o tym adresie istnieje, wysłaliśmy link do zresetowania hasła. Sprawdź skrzynkę (także folder spam).");
+    } catch (e) {
+      setErr("Nie udało się wysłać linku: " + (e?.message || ""));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="login-page">
       <div className="login-card">
@@ -1049,14 +1123,32 @@ function LoginPage({ users, setUsers, onLogin }) {
           <button className={`login-tab ${tab === "register" ? "active" : ""}`} onClick={() => { setTab("register"); setRegErr(""); }}>Nowe konto</button>
         </div>
 
-        {tab === "login" && (
+        {tab === "login" && resetMode && (
+          <>
+            <div className="login-sub" style={{ marginTop: -6, marginBottom: 14 }}>Podaj e-mail konta — wyślemy link do ustawienia nowego hasła.</div>
+            {err && <div className="alert alert-danger">❌ {err}</div>}
+            {resetInfo && <div className="alert alert-info">ℹ️ {resetInfo}</div>}
+            <div className="form-group"><label className="form-label">E-mail</label>
+              <input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleReset()} placeholder="jan@example.com" /></div>
+            <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={handleReset} disabled={loading}>{loading ? "Wysyłanie…" : "📨 Wyślij link resetujący"}</button>
+            <div style={{ textAlign: "center", marginTop: 14 }}>
+              <a href="#" onClick={(e) => { e.preventDefault(); setResetMode(false); setErr(""); setResetInfo(""); }} style={{ color: "var(--primary)", fontSize: ".9rem" }}>← Wróć do logowania</a>
+            </div>
+          </>
+        )}
+
+        {tab === "login" && !resetMode && (
           <>
             {err && <div className="alert alert-danger">❌ {err}</div>}
             {regInfo && <div className="alert alert-info">ℹ️ {regInfo}</div>}
+            {resetInfo && <div className="alert alert-info">ℹ️ {resetInfo}</div>}
             <div className="form-group"><label className="form-label">E-mail</label>
               <input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="jan@example.com" /></div>
             <div className="form-group"><label className="form-label">Hasło</label>
               <input className="form-input" type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="••••••••" /></div>
+            <div style={{ textAlign: "right", marginTop: -6, marginBottom: 10 }}>
+              <a href="#" onClick={(e) => { e.preventDefault(); setResetMode(true); setErr(""); setResetInfo(""); }} style={{ color: "var(--primary)", fontSize: ".85rem" }}>Nie pamiętasz hasła?</a>
+            </div>
             <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={handleLogin} disabled={loading}>{loading ? "Logowanie…" : "Zaloguj się →"}</button>
 
             <div className="flex items-center gap-2 mt-4" style={{ margin: "18px 0" }}>

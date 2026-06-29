@@ -61,13 +61,21 @@ export async function getSessionUser() {
   return data?.session?.user || null;
 }
 
-// Subskrypcja zmian stanu logowania (login / logout / odświeżenie tokenu).
-// Zwraca funkcję do odsubskrybowania.
+// Subskrypcja zmian stanu logowania (login / logout / odświeżenie tokenu /
+// odzyskiwanie hasła). Przekazuje użytkownika oraz typ zdarzenia.
 export function onAuthChange(callback) {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session?.user || null);
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    callback(session?.user || null, event);
   });
   return () => data?.subscription?.unsubscribe();
+}
+
+// Wysyła e-mail z linkiem do zresetowania hasła (wbudowana usługa Supabase Auth).
+// redirectTo musi być dozwolonym adresem w ustawieniach Auth (Redirect URLs).
+export async function sendPasswordReset(email) {
+  const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+  const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+  if (error) throw error;
 }
 
 // Buduje obiekt użytkownika w formacie używanym przez aplikację
