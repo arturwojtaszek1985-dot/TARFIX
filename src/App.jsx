@@ -930,7 +930,7 @@ export default function App() {
 
   const cats = ["Wszystkie", ...new Set([...categories.map(c => c.name), ...products.map(p => p.category)])];
   const filtered = products.filter(p =>
-    (isAdmin || p.published !== false) &&
+    (p.published !== false) &&
     (filterCat === "Wszystkie" || p.category === filterCat) &&
     (filterSubcat === "Wszystkie" || p.subcategory === filterSubcat) &&
     p.name.toLowerCase().includes(searchQ.toLowerCase())
@@ -3152,6 +3152,12 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const allVisibleIds = products.map(p => p.id);
+  const allSelected = products.length > 0 && selectedIds.length === products.length;
+  const toggleSelectAll = () => setSelectedIds(allSelected ? [] : allVisibleIds);
   const [newUnitValue, setNewUnitValue] = useState("");
   const [newUnitLabel, setNewUnitLabel] = useState("");
   const [newSub, setNewSub] = useState({});
@@ -3355,11 +3361,21 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
         <div className="stat-card"><div className="stat-value">{categories.reduce((s, c) => s + c.subcategories.length, 0)}</div><div className="stat-label">Podkategorii</div></div>
       </div>
       <div className="card">
+        {selectedIds.length > 0 && (
+          <div className="flex items-center gap-3" style={{ padding: "10px 14px", marginBottom: 12, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, flexWrap: "wrap" }}>
+            <strong>Zaznaczono: {selectedIds.length}</strong>
+            <button className="btn btn-danger btn-sm" onClick={() => setBulkConfirm(true)}>🗑️ Usuń zaznaczone ({selectedIds.length})</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setSelectedIds([])}>Wyczyść zaznaczenie</button>
+          </div>
+        )}
         <div className="table-wrap">
           <table>
-            <thead><tr><th>SKU</th><th>Produkt</th><th>Kategoria</th><th>Podkategoria</th><th>Cena</th><th>Waga</th><th>Magazyn</th><th>Akcje</th></tr></thead>
+            <thead><tr>
+              <th style={{ width: 36 }}><input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Zaznacz wszystkie" style={{ width: 16, height: 16 }} /></th>
+              <th>SKU</th><th>Produkt</th><th>Kategoria</th><th>Podkategoria</th><th>Cena</th><th>Waga</th><th>Magazyn</th><th>Akcje</th></tr></thead>
             <tbody>{products.map(p => (
-              <tr key={p.id}>
+              <tr key={p.id} style={selectedIds.includes(p.id) ? { background: "#fef2f2" } : undefined}>
+                <td><input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ width: 16, height: 16 }} /></td>
                 <td style={{ fontFamily: "monospace", fontSize: ".78rem", color: "var(--muted)" }}>{p.sku || "—"}</td>
                 <td>
                   {p.photo
@@ -3695,6 +3711,33 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                   }
                 }}>🗑️ Tak, usuń</button>
                 <button className="btn btn-secondary" onClick={() => setDelTarget(null)}>Anuluj</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkConfirm && (
+        <div className="modal-bg">
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header"><h2 className="modal-title">Usunąć zaznaczone produkty?</h2><button className="close-btn" onClick={() => setBulkConfirm(false)}>✕</button></div>
+            <div className="modal-body">
+              <p style={{ marginTop: 0 }}>Czy na pewno chcesz usunąć <strong>{selectedIds.length}</strong> {selectedIds.length === 1 ? "produkt" : "produktów"}? Tej operacji nie można cofnąć.</p>
+              <div className="flex gap-3 mt-4">
+                <button className="btn btn-danger" style={{ flex: 1 }} onClick={async () => {
+                  try {
+                    await api.deleteProducts(selectedIds);
+                    const removed = new Set(selectedIds);
+                    setProducts(prev => prev.filter(x => !removed.has(x.id)));
+                    showAlert(`Usunięto ${selectedIds.length} ${selectedIds.length === 1 ? "produkt" : "produktów"}`);
+                    setSelectedIds([]);
+                  } catch (err) {
+                    showAlert("Nie udało się usunąć z bazy danych: " + err.message, "danger");
+                  } finally {
+                    setBulkConfirm(false);
+                  }
+                }}>🗑️ Tak, usuń zaznaczone</button>
+                <button className="btn btn-secondary" onClick={() => setBulkConfirm(false)}>Anuluj</button>
               </div>
             </div>
           </div>

@@ -178,6 +178,19 @@ export async function deleteProduct(id) {
   if (error) throw error;
 }
 
+// Hurtowe usunięcie wielu produktów po liście ID.
+export async function deleteProducts(ids) {
+  if (!ids || ids.length === 0) return;
+  const { error } = await supabase.from("products").delete().in("id", ids);
+  if (error) throw error;
+}
+
+// Szybkie przełączenie widoczności produktu w sklepie (szkic / opublikowany).
+export async function setProductPublished(id, published) {
+  const { error } = await supabase.from("products").update({ published }).eq("id", id);
+  if (error) throw error;
+}
+
 // Masowy import/aktualizacja z CSV (WF-Mag) — wstawia nowe, aktualizuje istniejące po SKU
 export async function upsertProductsBySku(products) {
   const { data, error } = await supabase.from("products").upsert(products, { onConflict: "sku" }).select();
