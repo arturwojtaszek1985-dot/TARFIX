@@ -181,6 +181,19 @@ const minVariantPrice = (p) => {
 };
 const comboLabel = (combo) => Object.values(combo || {}).join(" · ");
 
+// Auto-zaznaczanie: dla każdej grupy atrybutów, w której realnie jest tylko jedna
+// dostępna wartość, ustawia ją od razu. Gdy produkt ma jeden wariant — zaznacza go
+// w całości (klient od razu widzi cenę, bez klikania).
+const autoSelectCombo = (p) => {
+  if (!hasVariants(p)) return {};
+  const combo = {};
+  (p.attributeGroups || []).forEach(g => {
+    const vals = availableValues(p, g.name, combo);
+    if (vals.size === 1) combo[g.name] = [...vals][0];
+  });
+  return combo;
+};
+
 // VAT: ceny wariantów wpisywane są jako NETTO; brutto liczone automatycznie (23%).
 const VAT_RATE = 0.23;
 const grossOf = (net) => Math.round((+net || 0) * (1 + VAT_RATE) * 100) / 100;
@@ -591,6 +604,7 @@ export default function App() {
             unit: p.unit || "szt", image: p.image || "📦", photo: p.photo || "",
             longDescription: p.long_description || "", specs: p.specs || [],
             promoPrice: p.promo_price != null ? Number(p.promo_price) : null,
+            published: p.published !== false,
             attributeGroups: Array.isArray(p.attribute_groups) ? p.attribute_groups : [],
             variants: Array.isArray(p.variants) ? p.variants.map(v => ({
               id: v.id || String(Math.random()).slice(2),
@@ -883,6 +897,7 @@ export default function App() {
 
   const cats = ["Wszystkie", ...new Set([...categories.map(c => c.name), ...products.map(p => p.category)])];
   const filtered = products.filter(p =>
+    (isAdmin || p.published !== false) &&
     (filterCat === "Wszystkie" || p.category === filterCat) &&
     (filterSubcat === "Wszystkie" || p.subcategory === filterSubcat) &&
     p.name.toLowerCase().includes(searchQ.toLowerCase())
@@ -2039,7 +2054,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                   <div key={p.id} className="product-card">
                     <div className="product-emoji product-link" onClick={() => onOpenDetail(p.id)}>{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
                     <div className="product-body">
-                      <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a></div>
+                      <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a>{isAdmin && p.published === false && <span className="badge badge-orange" style={{ marginLeft: 6 }}>Szkic</span>}</div>
                       {productRatings && productRatings[p.id] && <div style={{ margin: "2px 0" }}><Stars value={productRatings[p.id].avg} count={productRatings[p.id].count} /></div>}
                       <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
                         <span className="tag">{p.category}</span>
@@ -2097,7 +2112,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
   const [quoteSending, setQuoteSending] = useState(false);
 
   useEffect(() => {
-    setCombo({});
+    setCombo(autoSelectCombo(product));
     setReviewForm({ name: !isGuest && currentUser ? (currentUser.name || "") : "", rating: 0, comment: "" });
     setQuoteOpen(false);
     setQuoteForm({ quantity: "", name: !isGuest && currentUser ? (currentUser.name || "") : "", email: !isGuest && currentUser ? (currentUser.email || "") : "", phone: "", company: "", message: "" });
@@ -2113,6 +2128,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
   // ── SCHEMA.ORG PRODUCT (JSON-LD) + tytuł strony + canonical ─────────────────
   useEffect(() => {
     if (!product || typeof document === "undefined") return;
+    if (!product.published && !isAdmin) return;
     const prevTitle = document.title;
     document.title = `${product.name} — TARFIX`;
 
@@ -2211,7 +2227,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
     }
   };
 
-  if (!product) {
+  if (!product || (!product.published && !isAdmin)) {
     return (
       <div className="empty-state">
         <div className="icon">❓</div>
@@ -2923,7 +2939,7 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [] });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
   const [newUnitValue, setNewUnitValue] = useState("");
@@ -2943,7 +2959,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     reader.readAsDataURL(file);
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [] }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false }); setEditItem(null); setModal("product"); };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? "") })) : [];
@@ -2998,16 +3014,17 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       long_description: form.longDescription, specs: form.specs,
       attribute_groups: cleanGroups,
       variants: cleanVariants,
+      published: !!form.published,
     };
     try {
       if (editItem) {
         const updated = await api.updateProduct(editItem.id, payload);
-        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants } : p));
+        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants, published: !!form.published } : p));
       } else {
         const created = await api.addProduct(payload);
-        setProducts(prev => [...prev, { ...form, id: created.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants }]);
+        setProducts(prev => [...prev, { ...form, id: created.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants, published: !!form.published }]);
       }
-      showAlert(editItem ? "Produkt zaktualizowany" : "Produkt dodany"); setModal(null);
+      showAlert(editItem ? (form.published ? "Produkt zaktualizowany" : "Zapisano jako szkic") : (form.published ? "Produkt dodany i opublikowany" : "Produkt zapisany w buforze (szkic)")); setModal(null);
     } catch (err) {
       showAlert("Nie udało się zapisać do bazy danych: " + err.message, "danger");
     }
@@ -3150,7 +3167,20 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                 </td>
                 <td className="text-sm text-muted">{p.weight ? `${p.weight} kg` : "—"}</td>
                 <td><span className={`badge ${p.stock > 10 ? "badge-green" : p.stock > 0 ? "badge-orange" : "badge-red"}`}>{p.stock} {units.find(u => u.value === p.unit)?.label || "szt."}</span></td>
-                <td><div className="flex gap-2">
+                <td><div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
+                  {p.published !== false
+                    ? <span className="badge badge-green">✅ Opublikowany</span>
+                    : <span className="badge badge-orange">📝 Szkic</span>}
+                  <button className="btn btn-secondary btn-sm" title={p.published !== false ? "Ukryj (przenieś do bufora)" : "Opublikuj w sklepie"} onClick={async () => {
+                    const next = !(p.published !== false);
+                    try {
+                      await api.setProductPublished(p.id, next);
+                      setProducts(prev => prev.map(x => x.id === p.id ? { ...x, published: next } : x));
+                      showAlert(next ? "Opublikowano w sklepie" : "Przeniesiono do bufora (szkic)");
+                    } catch (err) {
+                      showAlert("Nie udało się zmienić statusu: " + err.message, "danger");
+                    }
+                  }}>{p.published !== false ? "🙈 Ukryj" : "🚀 Opublikuj"}</button>
                   <button className="btn btn-secondary btn-sm" onClick={() => openEdit(p)}>✏️</button>
                   <button className="btn btn-danger btn-sm" onClick={() => setDelTarget(p)}>🗑️</button>
                 </div></td>
@@ -3314,8 +3344,18 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                 )}
               </div>
 
+              <div style={{ marginTop: 16, padding: "12px 14px", background: form.published ? "#ecfdf5" : "#fff7ed", border: `1px solid ${form.published ? "#a7f3d0" : "#fed7aa"}`, borderRadius: 8 }}>
+                <label className="flex items-center gap-3" style={{ cursor: "pointer", margin: 0 }}>
+                  <input type="checkbox" checked={!!form.published} onChange={e => setForm(f => ({ ...f, published: e.target.checked }))} style={{ width: 18, height: 18 }} />
+                  <span>
+                    <strong>{form.published ? "✅ Opublikowany — widoczny w sklepie" : "📝 Szkic (bufor) — niewidoczny dla klientów"}</strong>
+                    <div className="text-sm text-muted">{form.published ? "Produkt jest dostępny dla klientów." : "Zaznacz, aby udostępnić produkt w sklepie. Możesz też opublikować go później z listy produktów."}</div>
+                  </span>
+                </label>
+              </div>
+
               <div className="flex gap-3 mt-4">
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>💾 {editItem ? "Zapisz" : "Dodaj"}</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={save}>💾 {editItem ? "Zapisz" : (form.published ? "Dodaj" : "Zapisz w buforze")}</button>
                 <button className="btn btn-secondary" onClick={() => setModal(null)}>Anuluj</button>
               </div>
             </div>
