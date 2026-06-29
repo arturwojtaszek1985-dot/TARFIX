@@ -32,6 +32,19 @@ export async function getProfile(userId) {
   return data;
 }
 
+// Zapis danych firmy zalogowanego użytkownika — przez bezpieczną funkcję RPC,
+// która aktualizuje wyłącznie pola firmowe dla auth.uid() (bez roli/rabatu).
+export async function updateMyCompany(fields) {
+  const { error } = await supabase.rpc("update_my_company", {
+    p_company_name: fields.companyName || null,
+    p_nip: fields.nip || null,
+    p_company_address: fields.companyAddress || null,
+    p_phone: fields.phone || null,
+    p_contact_name: fields.contactName || null,
+  });
+  if (error) throw error;
+}
+
 // Zmiana hasła zalogowanego użytkownika (Supabase Auth).
 // Wymaga aktywnej sesji — użytkownik musi być zalogowany.
 export async function changePassword(newPassword) {
@@ -239,6 +252,35 @@ export async function saveBannerInfo(bannerInfo) {
   const { error } = await supabase
     .from("settings")
     .upsert({ key: "shop_banner", value: bannerInfo }, { onConflict: "key" });
+  if (error) throw error;
+}
+
+// Generyczny odczyt/zapis treści w settings (np. regulamin, polityka cookies).
+// Odczyt publiczny; zapis tylko admin (pilnuje tego polityka RLS na settings).
+export async function fetchSetting(key) {
+  const { data, error } = await supabase.from("settings").select("value").eq("key", key).maybeSingle();
+  if (error) throw error;
+  return data?.value ?? null;
+}
+export async function saveSetting(key, value) {
+  const { error } = await supabase.from("settings").upsert({ key, value }, { onConflict: "key" });
+  if (error) throw error;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// REKLAMACJE
+// ════════════════════════════════════════════════════════════════════════
+export async function createComplaint(complaint) {
+  const { error } = await supabase.from("complaints").insert(complaint);
+  if (error) throw error;
+}
+export async function fetchComplaints() {
+  const { data, error } = await supabase.from("complaints").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+export async function updateComplaintStatus(id, status) {
+  const { error } = await supabase.from("complaints").update({ status }).eq("id", id);
   if (error) throw error;
 }
 

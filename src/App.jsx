@@ -180,6 +180,11 @@ const minVariantPrice = (p) => {
   return prices.length ? Math.min(...prices) : 0;
 };
 const comboLabel = (combo) => Object.values(combo || {}).join(" · ");
+
+// VAT: ceny wariantów wpisywane są jako NETTO; brutto liczone automatycznie (23%).
+const VAT_RATE = 0.23;
+const grossOf = (net) => Math.round((+net || 0) * (1 + VAT_RATE) * 100) / 100;
+const netOf = (gross) => Math.round((+gross || 0) / (1 + VAT_RATE) * 100) / 100;
 const parseNum = (s) => parseFloat(String(s).replace(",", ".").replace(/\s/g, "")) || 0;
 
 // ── Style ─────────────────────────────────────────────────────────────────────
@@ -306,6 +311,12 @@ const css = `
   .attr-tile:hover:not(:disabled){border-color:var(--primary)}
   .attr-tile.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
   .attr-tile:disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+  .site-footer{border-top:1px solid var(--border);background:#fff;margin-top:32px}
+  .site-footer-inner{max-width:1200px;margin:0 auto;padding:18px 20px;display:flex;flex-wrap:wrap;gap:18px;align-items:center;color:var(--muted);font-size:.85rem}
+  .footer-link{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.85rem;padding:0;text-decoration:underline}
+  .footer-link:hover{color:var(--primary)}
+  .cookie-bar{position:fixed;left:0;right:0;bottom:0;z-index:200;background:#1e293b;color:#e2e8f0;padding:14px 18px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;box-shadow:0 -4px 16px rgba(0,0,0,.15)}
+  .cookie-bar a{color:#93c5fd;cursor:pointer;text-decoration:underline}
   .product-footer{padding:10px 12px;border-top:1px solid var(--border);background:#fafafa}
   .product-sku{font-size:.72rem;color:var(--muted);font-family:monospace}
 
@@ -824,6 +835,7 @@ export default function App() {
             <div className="nav-left">
               <button className={`btn btn-ghost ${page === "shop" ? "active" : ""}`} onClick={() => setPage("shop")}>🏪 Sklep</button>
               <button className={`btn btn-ghost ${page === "contact" ? "active" : ""}`} onClick={() => setPage("contact")}>✉️ Kontakt</button>
+              <button className={`btn btn-ghost ${page === "reklamacje" ? "active" : ""}`} onClick={() => setPage("reklamacje")}>🛠️ Reklamacje</button>
               {isAdmin && <>
                 <button className={`btn btn-ghost ${page === "csv" ? "active" : ""}`} onClick={() => setPage("csv")}>📥 CSV</button>
                 <button className={`btn btn-ghost ${page === "products" ? "active" : ""}`} onClick={() => setPage("products")}>📦 Produkty</button>
@@ -874,10 +886,24 @@ export default function App() {
           {page === "users" && isAdmin && <AdminUsers showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} currentUser={currentUser} />}
           {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} setOrders={setOrders} isAdmin={isAdmin} units={units} contactInfo={contactInfo} showAlert={showAlert} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
+          {page === "reklamacje" && <ReklamacjePage currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
+          {page === "terms" && <StaticContentPage title="📄 Regulamin sklepu" settingKey="terms_content" isAdmin={isAdmin} showAlert={showAlert} />}
+          {page === "cookies" && <StaticContentPage title="🍪 Polityka cookies" settingKey="cookies_content" isAdmin={isAdmin} showAlert={showAlert} />}
         </main>
+
+        <footer className="site-footer">
+          <div className="site-footer-inner">
+            <span>© {new Date().getFullYear()} TARFIX</span>
+            <button className="footer-link" onClick={() => setPage("terms")}>Regulamin</button>
+            <button className="footer-link" onClick={() => setPage("cookies")}>Polityka cookies</button>
+            <button className="footer-link" onClick={() => setPage("reklamacje")}>Reklamacje</button>
+            <button className="footer-link" onClick={() => setPage("contact")}>Kontakt</button>
+          </div>
+        </footer>
       </div>
 
       {cartOpen && <div className="overlay" onClick={() => setCartOpen(false)} />}
+      <CookieConsent onOpenPolicy={() => setPage("cookies")} />
       <div className={`cart-drawer ${cartOpen ? "open" : ""}`}>
         <div className="cart-header">
           <h2 className="card-title" style={{ margin: 0 }}>🛒 Koszyk ({cartCount})</h2>
@@ -926,6 +952,8 @@ export default function App() {
             <span>{freeShipping ? <span style={{ color: "var(--success)", fontWeight: 600 }}>Gratis</span> : fmt(shippingCost)}</span>
           </div>
           <div className="cart-total-row cart-total-final"><span>Do zapłaty:</span><span>{fmt(cartTotal)}</span></div>
+          <div className="cart-total-row text-sm text-muted"><span>w tym netto:</span><span>{fmt(netOf(cartTotal))}</span></div>
+          <div className="cart-total-row text-sm text-muted"><span>w tym VAT 23%:</span><span>{fmt(cartTotal - netOf(cartTotal))}</span></div>
           <button className="btn btn-success w-full" style={{ marginTop: 10 }} onClick={() => setPaymentOpen(true)} disabled={!cart.length}>💳 Przejdź do płatności</button>
         </div>
       </div>
@@ -1067,6 +1095,41 @@ function AccountPage({ currentUser, showAlert }) {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Dane firmy
+  const [company, setCompany] = useState({ companyName: "", nip: "", companyAddress: "", phone: "", contactName: "" });
+  const [companyLoading, setCompanyLoading] = useState(true);
+  const [companySaving, setCompanySaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await api.getProfile(currentUser.id);
+        if (!cancelled && p) setCompany({
+          companyName: p.company_name || "", nip: p.nip || "", companyAddress: p.company_address || "",
+          phone: p.phone || "", contactName: p.contact_name || "",
+        });
+      } catch (e) {
+        // brak danych / brak profilu — zostają puste pola
+      } finally {
+        if (!cancelled) setCompanyLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser.id]);
+
+  const saveCompany = async () => {
+    setCompanySaving(true);
+    try {
+      await api.updateMyCompany(company);
+      showAlert("Dane firmy zapisane.", "success");
+    } catch (e) {
+      showAlert("Nie udało się zapisać danych firmy: " + (e?.message || ""), "danger");
+    } finally {
+      setCompanySaving(false);
+    }
+  };
+
   const handleChange = async () => {
     setErr("");
     if (!pass1 || !pass2) return setErr("Wypełnij oba pola.");
@@ -1095,6 +1158,26 @@ function AccountPage({ currentUser, showAlert }) {
           Zalogowano jako <strong>{currentUser?.name}</strong>{currentUser?.email ? ` (${currentUser.email})` : ""}.
         </p>
 
+        <h3 style={{ fontSize: "1.05rem", marginBottom: 14 }}>🏢 Dane firmy</h3>
+        <p className="text-sm text-muted" style={{ marginTop: -6, marginBottom: 14 }}>Zapisane dane możesz wykorzystać przy zamówieniach (faktura, dostawa).</p>
+        {companyLoading
+          ? <p className="text-sm text-muted">Wczytywanie…</p>
+          : <>
+              <div className="form-group"><label className="form-label">Nazwa firmy</label>
+                <input className="form-input" value={company.companyName} onChange={e => setCompany(c => ({ ...c, companyName: e.target.value }))} placeholder="np. MK Technika Zamocowań" /></div>
+              <div className="form-group"><label className="form-label">NIP</label>
+                <input className="form-input" value={company.nip} onChange={e => setCompany(c => ({ ...c, nip: e.target.value }))} placeholder="np. 1234567890" /></div>
+              <div className="form-group"><label className="form-label">Adres firmy</label>
+                <input className="form-input" value={company.companyAddress} onChange={e => setCompany(c => ({ ...c, companyAddress: e.target.value }))} placeholder="ulica, nr, kod, miejscowość" /></div>
+              <div className="form-group"><label className="form-label">Osoba kontaktowa</label>
+                <input className="form-input" value={company.contactName} onChange={e => setCompany(c => ({ ...c, contactName: e.target.value }))} placeholder="Imię i nazwisko" /></div>
+              <div className="form-group"><label className="form-label">Telefon</label>
+                <input className="form-input" type="tel" value={company.phone} onChange={e => setCompany(c => ({ ...c, phone: e.target.value }))} placeholder="np. 600 100 200" /></div>
+              <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={saveCompany} disabled={companySaving}>{companySaving ? "Zapisywanie…" : "💾 Zapisz dane firmy"}</button>
+            </>}
+
+        <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "24px 0" }} />
+
         <h3 style={{ fontSize: "1.05rem", marginBottom: 14 }}>Zmiana hasła</h3>
         {err && <div className="alert alert-danger">❌ {err}</div>}
         <div className="form-group"><label className="form-label">Nowe hasło</label>
@@ -1103,6 +1186,189 @@ function AccountPage({ currentUser, showAlert }) {
           <input className="form-input" type="password" value={pass2} onChange={e => setPass2(e.target.value)} onKeyDown={e => e.key === "Enter" && handleChange()} placeholder="••••••••" /></div>
         <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={handleChange} disabled={loading}>{loading ? "Zapisywanie…" : "Zmień hasło"}</button>
       </div>
+    </div>
+  );
+}
+
+// ── PASEK ZGODY NA COOKIES ──────────────────────────────────────────────────
+function CookieConsent({ onOpenPolicy }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    try { if (!localStorage.getItem("tarfix_cookies_ok")) setVisible(true); }
+    catch { setVisible(true); }
+  }, []);
+  if (!visible) return null;
+  const accept = () => {
+    try { localStorage.setItem("tarfix_cookies_ok", "1"); } catch {}
+    setVisible(false);
+  };
+  return (
+    <div className="cookie-bar">
+      <span style={{ maxWidth: 720 }}>
+        🍪 Ten serwis używa plików cookies, aby zapewnić prawidłowe działanie sklepu i poprawić jakość usług.{" "}
+        <a onClick={onOpenPolicy}>Polityka cookies</a>.
+      </span>
+      <button className="btn btn-primary btn-sm" onClick={accept}>Akceptuję</button>
+    </div>
+  );
+}
+
+// ── STRONA TREŚCI PRAWNEJ (regulamin / cookies) — edytowalna przez admina ───
+function StaticContentPage({ title, settingKey, isAdmin, showAlert }) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const v = await api.fetchSetting(settingKey);
+        if (!cancelled) setContent(typeof v === "string" ? v : (v == null ? "" : String(v)));
+      } catch (e) {
+        if (!cancelled) setContent("");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [settingKey]);
+
+  const startEdit = () => { setDraft(content); setEditing(true); };
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.saveSetting(settingKey, draft);
+      setContent(draft); setEditing(false);
+      showAlert("Treść zapisana.", "success");
+    } catch (e) {
+      showAlert("Nie udało się zapisać: " + (e?.message || ""), "danger");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      <div className="page-header" style={{ alignItems: "center" }}>
+        <h1 className="page-title">{title}</h1>
+        {isAdmin && !editing && <button className="btn btn-secondary btn-sm" onClick={startEdit}>✏️ Edytuj</button>}
+      </div>
+      <div className="card" style={{ padding: 24 }}>
+        {loading ? <p className="text-muted">Wczytywanie…</p>
+          : editing ? <>
+              <textarea className="form-input" style={{ minHeight: 360, fontFamily: "inherit", lineHeight: 1.6 }} value={draft} onChange={e => setDraft(e.target.value)} />
+              <div className="flex gap-3 mt-4">
+                <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Zapisywanie…" : "💾 Zapisz"}</button>
+                <button className="btn btn-secondary" onClick={() => setEditing(false)}>Anuluj</button>
+              </div>
+            </>
+          : content ? <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{content}</div>
+          : <p className="text-muted">Treść nie została jeszcze uzupełniona.{isAdmin ? " Kliknij „Edytuj", aby ją dodać." : ""}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── REKLAMACJE: formularz + (dla admina) lista zgłoszeń ─────────────────────
+const COMPLAINT_STATUSES = ["Nowa", "W trakcie", "Rozpatrzona", "Odrzucona"];
+function ReklamacjePage({ currentUser, isGuest, isAdmin, showAlert }) {
+  const [form, setForm] = useState({ name: "", email: "", phone: "", orderNumber: "", product: "", reason: "Wada produktu", description: "" });
+  const [sending, setSending] = useState(false);
+  const [complaints, setComplaints] = useState([]);
+  const [loadingList, setLoadingList] = useState(isAdmin);
+
+  useEffect(() => {
+    if (!isGuest && currentUser) setForm(f => ({ ...f, name: f.name || currentUser.name || "", email: f.email || currentUser.email || "" }));
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try { const data = await api.fetchComplaints(); if (!cancelled) setComplaints(data || []); }
+      catch (e) { if (!cancelled) showAlert("Nie udało się wczytać reklamacji: " + e.message, "danger"); }
+      finally { if (!cancelled) setLoadingList(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+
+  const submit = async () => {
+    if (!form.name.trim() || !form.email.trim() || !form.description.trim())
+      return showAlert("Uzupełnij imię, e-mail i opis problemu.", "danger");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return showAlert("Podaj poprawny adres e-mail.", "danger");
+    setSending(true);
+    try {
+      await api.createComplaint({
+        user_id: isGuest ? null : currentUser?.id || null,
+        order_number: form.orderNumber || null, name: form.name, email: form.email,
+        phone: form.phone || null, product: form.product || null, reason: form.reason, description: form.description,
+      });
+      showAlert("Reklamacja została wysłana. Odpowiemy najszybciej, jak to możliwe.", "success");
+      setForm(f => ({ ...f, orderNumber: "", product: "", description: "" }));
+    } catch (e) {
+      showAlert("Nie udało się wysłać reklamacji: " + (e?.message || ""), "danger");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const changeStatus = async (id, status) => {
+    try {
+      await api.updateComplaintStatus(id, status);
+      setComplaints(prev => prev.map(c => c.id === id ? { ...c, status } : c));
+      showAlert("Status reklamacji zaktualizowany.");
+    } catch (e) { showAlert("Nie udało się zmienić statusu: " + e.message, "danger"); }
+  };
+
+  return (
+    <div style={{ maxWidth: isAdmin ? 1000 : 640, margin: "0 auto" }}>
+      <div className="page-header"><h1 className="page-title">🛠️ Reklamacje</h1></div>
+
+      {isAdmin ? (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Zgłoszenia reklamacyjne</h3>
+          {loadingList ? <p className="text-muted">Wczytywanie…</p>
+            : complaints.length === 0 ? <div className="empty-state"><div className="icon">🛠️</div>Brak reklamacji</div>
+            : <div className="table-wrap"><table>
+                <thead><tr><th>Data</th><th>Klient</th><th>Zamówienie</th><th>Produkt</th><th>Powód</th><th>Opis</th><th>Status</th></tr></thead>
+                <tbody>{complaints.map(c => (
+                  <tr key={c.id}>
+                    <td className="text-sm text-muted">{new Date(c.created_at).toLocaleDateString("pl-PL")}</td>
+                    <td><strong>{c.name}</strong><div className="text-sm text-muted">{c.email}{c.phone ? ` · ${c.phone}` : ""}</div></td>
+                    <td>{c.order_number || "—"}</td>
+                    <td>{c.product || "—"}</td>
+                    <td>{c.reason || "—"}</td>
+                    <td style={{ maxWidth: 240, whiteSpace: "pre-wrap" }}>{c.description}</td>
+                    <td><select className="form-select" style={{ padding: "5px 8px" }} value={c.status} onChange={e => changeStatus(c.id, e.target.value)}>{COMPLAINT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                  </tr>
+                ))}</tbody>
+              </table></div>}
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 24 }}>
+          <p className="text-muted" style={{ marginTop: 0 }}>Wypełnij formularz, aby zgłosić reklamację. Pola oznaczone * są wymagane.</p>
+          <div className="flex gap-3">
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">Imię i nazwisko *</label><input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">E-mail *</label><input className="form-input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+          </div>
+          <div className="flex gap-3">
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">Telefon</label><input className="form-input" type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">Numer zamówienia</label><input className="form-input" value={form.orderNumber} onChange={e => setForm(f => ({ ...f, orderNumber: e.target.value }))} placeholder="np. #123456" /></div>
+          </div>
+          <div className="flex gap-3">
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">Produkt</label><input className="form-input" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} placeholder="nazwa lub SKU" /></div>
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">Powód reklamacji</label>
+              <select className="form-select" value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}>
+                <option>Wada produktu</option><option>Uszkodzenie w transporcie</option><option>Niezgodność z zamówieniem</option><option>Braki w dostawie</option><option>Inny</option>
+              </select></div>
+          </div>
+          <div className="form-group"><label className="form-label">Opis problemu *</label><textarea className="form-input" style={{ minHeight: 120 }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Opisz, na czym polega problem…" /></div>
+          <button className="btn btn-primary w-full" style={{ padding: "11px" }} onClick={submit} disabled={sending}>{sending ? "Wysyłanie…" : "📨 Wyślij reklamację"}</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1615,8 +1881,9 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                       <div>
                         {isVar ? <>
                           <span className="text-sm text-muted" style={{ marginRight: 6 }}>od</span>
-                          <span className="product-price">{fmt(minVariantPrice(p))}</span>
-                          <div className="text-sm text-muted">{p.variants.length} wariantów do wyboru</div>
+                          <span className="product-price">{fmt(grossOf(minVariantPrice(p)))}</span>
+                          <span className="text-sm text-muted"> brutto</span>
+                          <div className="text-sm text-muted">{fmt(minVariantPrice(p))} netto · {p.variants.length} wariantów</div>
                         </> : promo ? <>
                           <span className="product-price-original">{fmt(p.price)}</span>{" "}
                           <span className="product-price">{fmt(discount > 0 ? dp : base)}</span>
@@ -1672,8 +1939,6 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
   const isVar = hasVariants(product);
   const matched = isVar ? findVariant(product, combo) : null;
   const allSelected = isVar && (product.attributeGroups || []).every(g => combo[g.name]);
-  const varPrice = matched ? (+matched.price || 0) : minVariantPrice(product);
-  const varDisc = varPrice * (1 - discount / 100);
 
   return (
     <>
@@ -1724,19 +1989,19 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
 
               <div className="pdp-price" style={{ marginTop: 8 }}>
                 {!allSelected
-                  ? <><span className="text-sm text-muted">od </span>{fmt(minVariantPrice(product))}<div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
+                  ? <><span className="text-sm text-muted">od </span>{fmt(grossOf(minVariantPrice(product)))} <span className="text-sm text-muted">brutto · {fmt(minVariantPrice(product))} netto</span><div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
                   : matched
                     ? <>
-                        {discount > 0
-                          ? <><span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(varPrice)}</span>{" "}{fmt(varDisc)}<div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — oszczędzasz {fmt(varPrice - varDisc)}</div></>
-                          : fmt(varPrice)}
+                        <span className="product-price">{fmt(grossOf(matched.price))}</span> <span className="text-sm text-muted">brutto</span>
+                        <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(matched.price)} netto + VAT 23%</div>
+                        {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — cena brutto: {fmt(grossOf(matched.price) * (1 - discount / 100))}</div>}
                         {matched.sku && <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>SKU: {matched.sku}{matched.weight ? ` · waga: ${matched.weight} kg` : ""}</div>}
                       </>
                     : <span style={{ color: "var(--danger)", fontSize: "1rem" }}>Ta kombinacja jest niedostępna</span>}
               </div>
 
               <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || product.stock === 0}
-                onClick={() => onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: matched.price, sku: matched.sku, weight: matched.weight })}>
+                onClick={() => onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: grossOf(matched.price), sku: matched.sku, weight: matched.weight })}>
                 {product.stock === 0 ? "Brak w magazynie" : !allSelected ? "Wybierz opcje powyżej" : !matched ? "Kombinacja niedostępna" : "🛒 Dodaj do koszyka"}
               </button>
             </>
@@ -2335,14 +2600,10 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     setEditItem(p); setModal("product");
   };
   const save = async () => {
-    if (!form.name || !form.price) return showAlert("Wypełnij wymagane pola", "danger");
+    if (!form.name) return showAlert("Podaj nazwę produktu", "danger");
     if (!form.category) return showAlert("Wybierz kategorię", "danger");
-    // Cena promocyjna: puste pole = brak promocji (null). Musi być > 0 i < ceny regularnej.
-    const promoVal = form.promoPrice === "" || form.promoPrice == null ? null : +form.promoPrice;
-    if (promoVal != null && (isNaN(promoVal) || promoVal <= 0)) return showAlert("Cena promocyjna musi być liczbą większą od 0 (lub puste pole)", "danger");
-    if (promoVal != null && promoVal >= +form.price) return showAlert("Cena promocyjna musi być niższa od ceny regularnej", "danger");
 
-    // Warianty (styl Allegro): grupy atrybutów + kombinacje z ceną.
+    // Warianty (styl Allegro): grupy atrybutów + kombinacje z ceną NETTO.
     const cleanGroups = (form.attributeGroups || [])
       .map(g => ({ id: g.id, name: (g.name || "").trim(), values: (g.values || []).map(v => String(v).trim()).filter(Boolean) }))
       .filter(g => g.name && g.values.length);
@@ -2350,21 +2611,38 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     if (cleanGroups.length) {
       for (let i = 0; i < (form.variants || []).length; i++) {
         const v = form.variants[i];
-        const price = +v.price || 0;
+        const price = +v.price || 0; // cena NETTO wariantu
         const combo = {};
         for (const g of cleanGroups) {
           const val = v.combo?.[g.name];
           if (!val) return showAlert(`Wariant ${i + 1}: wybierz wartość dla „${g.name}”`, "danger");
           combo[g.name] = val;
         }
-        if (price <= 0) return showAlert(`Wariant ${i + 1}: cena musi być większa od 0`, "danger");
+        if (price <= 0) return showAlert(`Wariant ${i + 1}: cena netto musi być większa od 0`, "danger");
         cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0 });
       }
     }
 
+    const usingVariants = cleanGroups.length > 0;
+    let basePrice, promoVal;
+    if (usingVariants) {
+      // Cena ustalana wyłącznie w wariantach. Cena produktu = brutto najtańszego
+      // wariantu (netto × 1,23). Promocja nie dotyczy produktów z wariantami.
+      if (!cleanVariants.length) return showAlert("Dodaj przynajmniej jeden wariant z ceną netto", "danger");
+      const minNet = Math.min(...cleanVariants.map(v => v.price));
+      basePrice = grossOf(minNet);
+      promoVal = null;
+    } else {
+      if (!form.price) return showAlert("Podaj cenę brutto", "danger");
+      promoVal = form.promoPrice === "" || form.promoPrice == null ? null : +form.promoPrice;
+      if (promoVal != null && (isNaN(promoVal) || promoVal <= 0)) return showAlert("Cena promocyjna musi być liczbą większą od 0 (lub puste pole)", "danger");
+      if (promoVal != null && promoVal >= +form.price) return showAlert("Cena promocyjna musi być niższa od ceny regularnej", "danger");
+      basePrice = +form.price;
+    }
+
     const payload = {
       sku: form.sku, name: form.name, category: form.category, subcategory: form.subcategory,
-      description: form.description, price: +form.price, promo_price: promoVal, stock: +form.stock, weight: +form.weight || 0,
+      description: form.description, price: basePrice, promo_price: promoVal, stock: +form.stock, weight: +form.weight || 0,
       unit: form.unit, image: form.image, photo: form.photo,
       long_description: form.longDescription, specs: form.specs,
       attribute_groups: cleanGroups,
@@ -2373,10 +2651,10 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     try {
       if (editItem) {
         const updated = await api.updateProduct(editItem.id, payload);
-        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants } : p));
+        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants } : p));
       } else {
         const created = await api.addProduct(payload);
-        setProducts(prev => [...prev, { ...form, id: created.id, price: +form.price, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants }]);
+        setProducts(prev => [...prev, { ...form, id: created.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants }]);
       }
       showAlert(editItem ? "Produkt zaktualizowany" : "Produkt dodany"); setModal(null);
     } catch (err) {
@@ -2612,8 +2890,14 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
               </div>
 
               <div className="flex gap-3">
-                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena brutto *</label><input className="form-input" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} /></div>
-                <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena promocyjna</label><input className="form-input" type="number" step="0.01" min="0" placeholder="puste = brak promocji" value={form.promoPrice} onChange={e => setForm(f => ({ ...f, promoPrice: e.target.value }))} /></div>
+                {!((form.attributeGroups || []).some(g => (g.name || "").trim() && (g.values || []).length)) ? (
+                  <>
+                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena brutto *</label><input className="form-input" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} /></div>
+                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena promocyjna</label><input className="form-input" type="number" step="0.01" min="0" placeholder="puste = brak promocji" value={form.promoPrice} onChange={e => setForm(f => ({ ...f, promoPrice: e.target.value }))} /></div>
+                  </>
+                ) : (
+                  <div className="form-group" style={{ flex: 2 }}><label className="form-label">Cena</label><div className="form-input" style={{ background: "#f8fafc", color: "var(--muted)", display: "flex", alignItems: "center" }}>Ustalana w wariantach (netto) — sekcja „🧩 Warianty" poniżej</div></div>
+                )}
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Stan magazynowy</label><input className="form-input" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} /></div>
               </div>
               <div className="flex gap-3">
@@ -2674,7 +2958,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                             {g.values.map(val => <option key={val} value={val}>{val}</option>)}
                           </select>
                         ))}
-                        <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena" value={v.price}
+                        <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena netto" value={v.price}
                           onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], price: e.target.value }; return { ...f, variants: vs }; })} />
                         <input className="form-input" style={{ flex: "1 1 70px" }} placeholder="SKU" value={v.sku}
                           onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], sku: e.target.value }; return { ...f, variants: vs }; })} />
