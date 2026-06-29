@@ -185,6 +185,17 @@ const comboLabel = (combo) => Object.values(combo || {}).join(" · ");
 const VAT_RATE = 0.23;
 const grossOf = (net) => Math.round((+net || 0) * (1 + VAT_RATE) * 100) / 100;
 const netOf = (gross) => Math.round((+gross || 0) / (1 + VAT_RATE) * 100) / 100;
+
+// ── ADRESY URL PRODUKTÓW (routing przez History API) ────────────────────────
+const slugify = (s) => (s || "")
+  .toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+const productPath = (p) => p ? `/produkt/${slugify(p.name)}-${p.id}` : "/";
+// Wyciąga ID produktu z końca ścieżki (obsługuje /produkt/123 i /produkt/nazwa-123).
+const parseProductId = (path) => {
+  const m = (path || "").match(/\/produkt\/(?:.*-)?(\d+)\/?$/);
+  return m ? Number(m[1]) : null;
+};
 const parseNum = (s) => parseFloat(String(s).replace(",", ".").replace(/\s/g, "")) || 0;
 
 // ── Style ─────────────────────────────────────────────────────────────────────
@@ -694,6 +705,42 @@ export default function App() {
     setSelectedProductId(productId);
     setPage("product-detail");
   };
+
+  // ── ROUTING: synchronizacja stanu (page/produkt) z adresem URL ──────────────
+  const skipPush = useRef(false);
+  const KNOWN_PAGES = ["contact", "reklamacje", "terms", "cookies", "account", "orders", "products", "users", "csv", "stats", "quotes"];
+
+  // Stan → URL: po zmianie strony/produktu aktualizuje adres (pushState).
+  useEffect(() => {
+    if (skipPush.current) { skipPush.current = false; return; }
+    let path = "/";
+    if (page === "product-detail" && selectedProductId) {
+      const p = products.find(x => x.id === selectedProductId);
+      path = p ? productPath(p) : `/produkt/${selectedProductId}`;
+    } else if (page !== "shop" && KNOWN_PAGES.includes(page)) {
+      path = "/" + page;
+    }
+    if (typeof window !== "undefined" && window.location.pathname !== path) {
+      window.history.pushState({}, "", path);
+    }
+  }, [page, selectedProductId]);
+
+  // URL → stan: obsługa wstecz/dalej w przeglądarce + odczyt adresu przy starcie.
+  useEffect(() => {
+    const apply = () => {
+      const path = window.location.pathname;
+      const pid = parseProductId(path);
+      skipPush.current = true; // zmiana pochodzi z URL — nie pushujemy z powrotem
+      if (pid) { setSelectedProductId(pid); setPage("product-detail"); }
+      else {
+        const seg = path.replace(/^\//, "").split("/")[0];
+        setPage(KNOWN_PAGES.includes(seg) ? seg : "shop");
+      }
+    };
+    apply();
+    window.addEventListener("popstate", apply);
+    return () => window.removeEventListener("popstate", apply);
+  }, []);
 
   // Wczytanie zamówień z bazy przy wejściu na panel "Zamówienia"/"Moje zamówienia".
   // Admin widzi wszystkie, klient tylko swoje (RLS). Mapuje pola z bazy
@@ -2062,6 +2109,62 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
     })();
     return () => { cancelled = true; };
   }, [product?.id]);
+
+  // ── SCHEMA.ORG PRODUCT (JSON-LD) + tytuł strony + canonical ─────────────────
+  useEffect(() => {
+    if (!product || typeof document === "undefined") return;
+    const prevTitle = document.title;
+    document.title = `${product.name} — TARFIX`;
+
+    const url = window.location.origin + window.location.pathname;
+    const rating = productRatings ? productRatings[product.id] : null;
+    const inStock = (product.stock || 0) > 0;
+    const availability = inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock";
+
+    let offers;
+    if (hasVariants(product)) {
+      const nets = (product.variants || []).map(v => +v.price || 0).filter(n => n > 0);
+      const low = nets.length ? grossOf(Math.min(...nets)) : 0;
+      const high = nets.length ? grossOf(Math.max(...nets)) : 0;
+      offers = { "@type": "AggregateOffer", priceCurrency: "PLN", lowPrice: low, highPrice: high, offerCount: (product.variants || []).length, availability, url };
+    } else {
+      offers = { "@type": "Offer", priceCurrency: "PLN", price: effPrice(product), availability, url };
+    }
+
+    const ld = {
+      "@context": "https://schema.org/",
+      "@type": "Product",
+      name: product.name,
+      description: product.description || product.name,
+      sku: product.sku || String(product.id),
+      brand: { "@type": "Brand", name: "TARFIX" },
+      offers,
+    };
+    if (product.category) ld.category = product.category;
+    if (typeof product.photo === "string" && /^https?:\/\//.test(product.photo)) ld.image = product.photo;
+    if (rating && rating.count > 0) ld.aggregateRating = { "@type": "AggregateRating", ratingValue: rating.avg, reviewCount: rating.count };
+
+    const script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.setAttribute("data-product-ld", "1");
+    script.textContent = JSON.stringify(ld);
+    document.head.appendChild(script);
+
+    let canonical = document.querySelector('link[rel="canonical"][data-product="1"]');
+    if (!canonical) {
+      canonical = document.createElement("link");
+      canonical.setAttribute("rel", "canonical");
+      canonical.setAttribute("data-product", "1");
+      document.head.appendChild(canonical);
+    }
+    canonical.setAttribute("href", url);
+
+    return () => {
+      document.title = prevTitle;
+      script.remove();
+      if (canonical) canonical.remove();
+    };
+  }, [product?.id, productRatings, reviews]);
 
   const submitReview = async () => {
     if (!reviewForm.name.trim()) return showAlert("Podaj imię/nazwę.", "danger");
