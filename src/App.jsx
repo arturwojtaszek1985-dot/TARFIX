@@ -1266,7 +1266,7 @@ function StaticContentPage({ title, settingKey, isAdmin, showAlert }) {
               </div>
             </>
           : content ? <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{content}</div>
-          : <p className="text-muted">Treść nie została jeszcze uzupełniona.{isAdmin ? " Kliknij „Edytuj", aby ją dodać." : ""}</p>}
+          : <p className="text-muted">Treść nie została jeszcze uzupełniona.{isAdmin ? " Kliknij „Edytuj”, aby ją dodać." : ""}</p>}
       </div>
     </div>
   );
