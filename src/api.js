@@ -95,6 +95,7 @@ export async function buildAppUser(authUser) {
     name: profile?.name || authUser.user_metadata?.name || authUser.email,
     role: profile?.role || "customer",
     discount: profile?.discount || 0,
+    paymentTermDays: profile?.payment_term_days || 0,
   };
 }
 
@@ -201,6 +202,11 @@ export async function updateProfileDiscount(id, discount) {
 
 export async function updateProfileRole(id, role) {
   const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function updateProfilePaymentTerm(id, days) {
+  const { error } = await supabase.from("profiles").update({ payment_term_days: days }).eq("id", id);
   if (error) throw error;
 }
 

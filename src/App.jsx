@@ -717,6 +717,7 @@ export default function App() {
           deliveryPhone: o.delivery_phone,
           deliveryAddress: o.delivery_address,
           deliveryNip: o.delivery_nip,
+          paymentTermDays: o.payment_term_days || 0,
         }));
         setOrders(mapped);
       } catch (err) {
@@ -774,6 +775,7 @@ export default function App() {
       deliveryCompany: delivery.company || null, deliveryName: delivery.name || null,
       deliveryPhone: delivery.phone || null, deliveryAddress: delivery.address || null,
       deliveryNip: delivery.nip || null,
+      paymentTermDays: isGuest ? 0 : (currentUser.paymentTermDays || 0),
     };
 
     // Zapis zamówienia do bazy danych — jeśli się nie powiedzie, zamówienie
@@ -799,6 +801,7 @@ export default function App() {
         delivery_phone: newOrder.deliveryPhone,
         delivery_address: newOrder.deliveryAddress,
         delivery_nip: newOrder.deliveryNip,
+        payment_term_days: newOrder.paymentTermDays,
       });
     } catch (err) {
       console.error("Nie udało się zapisać zamówienia w bazie:", err.message);
@@ -845,6 +848,7 @@ export default function App() {
                 <button className={`btn btn-ghost ${page === "products" ? "active" : ""}`} onClick={() => setPage("products")}>📦 Produkty</button>
                 <button className={`btn btn-ghost ${page === "users" ? "active" : ""}`} onClick={() => setPage("users")}>👥 Klienci</button>
                 <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>
+                <button className={`btn btn-ghost ${page === "stats" ? "active" : ""}`} onClick={() => setPage("stats")}>📈 Statystyki</button>
               </>}
               {!isAdmin && !isGuest && <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>}
             </div>
@@ -889,6 +893,7 @@ export default function App() {
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
           {page === "users" && isAdmin && <AdminUsers showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} currentUser={currentUser} />}
           {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} setOrders={setOrders} isAdmin={isAdmin} units={units} contactInfo={contactInfo} showAlert={showAlert} />}
+          {page === "stats" && isAdmin && <StatsPage currentUser={currentUser} showAlert={showAlert} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
           {page === "reklamacje" && <ReklamacjePage currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "terms" && <StaticContentPage title="📄 Regulamin sklepu" settingKey="terms_content" isAdmin={isAdmin} showAlert={showAlert} />}
@@ -2667,6 +2672,7 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
   const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [] });
   const [newCat, setNewCat] = useState("");
+  const [delTarget, setDelTarget] = useState(null);
   const [newUnitValue, setNewUnitValue] = useState("");
   const [newUnitLabel, setNewUnitLabel] = useState("");
   const [newSub, setNewSub] = useState({});
@@ -2893,15 +2899,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                 <td><span className={`badge ${p.stock > 10 ? "badge-green" : p.stock > 0 ? "badge-orange" : "badge-red"}`}>{p.stock} {units.find(u => u.value === p.unit)?.label || "szt."}</span></td>
                 <td><div className="flex gap-2">
                   <button className="btn btn-secondary btn-sm" onClick={() => openEdit(p)}>✏️</button>
-                  <button className="btn btn-danger btn-sm" onClick={async () => {
-                    try {
-                      await api.deleteProduct(p.id);
-                      setProducts(prev => prev.filter(x => x.id !== p.id));
-                      showAlert("Usunięto");
-                    } catch (err) {
-                      showAlert("Nie udało się usunąć z bazy danych: " + err.message, "danger");
-                    }
-                  }}>🗑️</button>
+                  <button className="btn btn-danger btn-sm" onClick={() => setDelTarget(p)}>🗑️</button>
                 </div></td>
               </tr>
             ))}</tbody>
@@ -3174,6 +3172,31 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
           </div>
         </div>
       )}
+
+      {delTarget && (
+        <div className="modal-bg">
+          <div className="modal" style={{ maxWidth: 420 }}>
+            <div className="modal-header"><h2 className="modal-title">Usunąć produkt?</h2><button className="close-btn" onClick={() => setDelTarget(null)}>✕</button></div>
+            <div className="modal-body">
+              <p style={{ marginTop: 0 }}>Czy na pewno chcesz usunąć produkt <strong>{delTarget.name}</strong>? Tej operacji nie można cofnąć.</p>
+              <div className="flex gap-3 mt-4">
+                <button className="btn btn-danger" style={{ flex: 1 }} onClick={async () => {
+                  try {
+                    await api.deleteProduct(delTarget.id);
+                    setProducts(prev => prev.filter(x => x.id !== delTarget.id));
+                    showAlert("Produkt usunięty");
+                  } catch (err) {
+                    showAlert("Nie udało się usunąć z bazy danych: " + err.message, "danger");
+                  } finally {
+                    setDelTarget(null);
+                  }
+                }}>🗑️ Tak, usuń</button>
+                <button className="btn btn-secondary" onClick={() => setDelTarget(null)}>Anuluj</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -3201,11 +3224,12 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
     return () => { cancelled = true; };
   }, []);
 
-  const openEdit = (u) => { setForm({ role: u.role || "customer", discount: String(u.discount ?? 0) }); setEditItem(u); setModal("user"); };
+  const openEdit = (u) => { setForm({ role: u.role || "customer", discount: String(u.discount ?? 0), paymentTerm: String(u.payment_term_days ?? 0) }); setEditItem(u); setModal("user"); };
 
   const save = async () => {
     if (!editItem) return;
     const newDiscount = Math.max(0, Math.min(100, +form.discount || 0));
+    const newTerm = Math.max(0, +form.paymentTerm || 0);
     const isSelf = editItem.id === currentUser?.id;
     // Zabezpieczenie: nie pozwalamy odebrać roli admina samemu sobie
     // (inaczej można się zablokować poza panelem).
@@ -3213,10 +3237,11 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
     setSaving(true);
     try {
       await api.updateProfileDiscount(editItem.id, newDiscount);
+      await api.updateProfilePaymentTerm(editItem.id, newTerm);
       if (!isSelf && form.role !== editItem.role) {
         await api.updateProfileRole(editItem.id, form.role);
       }
-      setProfiles(prev => prev.map(p => p.id === editItem.id ? { ...p, discount: newDiscount, role: newRole } : p));
+      setProfiles(prev => prev.map(p => p.id === editItem.id ? { ...p, discount: newDiscount, role: newRole, payment_term_days: newTerm } : p));
       showAlert("Dane klienta zaktualizowane");
       setModal(null);
     } catch (err) {
@@ -3241,13 +3266,14 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
           : profiles.length === 0 ? <div className="empty-state"><div className="icon">👥</div>Brak zarejestrowanych klientów. Konta pojawią się tu automatycznie po rejestracji w sklepie.</div>
           : <div className="table-wrap">
             <table>
-              <thead><tr><th>Klient</th><th>Email</th><th>Rola</th><th>Rabat</th><th>Akcje</th></tr></thead>
+              <thead><tr><th>Klient</th><th>Email</th><th>Rola</th><th>Rabat</th><th>Termin płatności</th><th>Akcje</th></tr></thead>
               <tbody>{profiles.map(u => (
                 <tr key={u.id}>
                   <td><strong>{u.name || "—"}</strong>{u.id === currentUser?.id && <span className="badge badge-gray" style={{ marginLeft: 6 }}>To Ty</span>}</td>
                   <td className="text-muted">{u.email}</td>
                   <td><span className={`badge ${u.role === "admin" ? "badge-orange" : "badge-blue"}`}>{u.role === "admin" ? "🔧 Admin" : "👤 Klient"}</span></td>
                   <td>{(u.discount || 0) > 0 ? <span className="badge badge-green">🎉 {u.discount}%</span> : <span className="badge badge-gray">Brak</span>}</td>
+                  <td>{(u.payment_term_days || 0) > 0 ? <span className="badge badge-blue">{u.payment_term_days} dni</span> : <span className="badge badge-gray">Od razu</span>}</td>
                   <td><button className="btn btn-secondary btn-sm" onClick={() => openEdit(u)}>✏️ Edytuj</button></td>
                 </tr>
               ))}</tbody>
@@ -3267,6 +3293,17 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
                 </div>
                 <div className="form-group" style={{ flex: 1 }}><label className="form-label">Rabat (%)</label><input className="form-input" type="number" min="0" max="100" value={form.discount} onChange={e => setForm(f => ({ ...f, discount: e.target.value }))} /></div>
               </div>
+              <div className="form-group"><label className="form-label">Termin płatności</label>
+                <select className="form-select" value={form.paymentTerm} onChange={e => setForm(f => ({ ...f, paymentTerm: e.target.value }))}>
+                  <option value="0">Płatność od razu</option>
+                  <option value="7">7 dni</option>
+                  <option value="14">14 dni</option>
+                  <option value="21">21 dni</option>
+                  <option value="30">30 dni</option>
+                  <option value="60">60 dni</option>
+                </select>
+                <div className="text-sm text-muted" style={{ marginTop: 4 }}>Termin przelewu dla tego klienta (B2B). Obowiązuje od następnego zalogowania klienta.</div>
+              </div>
               <div className="flex gap-3 mt-4">
                 <button className="btn btn-primary" style={{ flex: 1 }} onClick={save} disabled={saving}>💾 {saving ? "Zapisywanie…" : "Zapisz"}</button>
                 <button className="btn btn-secondary" onClick={() => setModal(null)}>Anuluj</button>
@@ -3275,6 +3312,80 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+// ── STATYSTYKI SPRZEDAŻY ────────────────────────────────────────────────────
+function StatsPage({ currentUser, showAlert }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { const data = await api.fetchOrders(currentUser.id, true); if (!cancelled) setOrders(data || []); }
+      catch (e) { if (!cancelled) showAlert("Nie udało się wczytać danych: " + e.message, "danger"); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <><div className="page-header"><h1 className="page-title">📈 Statystyki sprzedaży</h1></div><div className="empty-state"><div className="icon">⏳</div>Wczytywanie danych…</div></>;
+
+  // Zrealizowane/aktywne liczymy jako sprzedaż; anulowane pomijamy.
+  const valid = orders.filter(o => o.status !== "Anulowane");
+  const revenue = valid.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const count = valid.length;
+  const avg = count ? revenue / count : 0;
+  const byStatus = {};
+  orders.forEach(o => { byStatus[o.status] = (byStatus[o.status] || 0) + 1; });
+
+  // Top produkty wg ilości i wartości (z pozycji zamówień).
+  const prodMap = {};
+  valid.forEach(o => (o.items || []).forEach(it => {
+    const key = it.name || "—";
+    if (!prodMap[key]) prodMap[key] = { name: key, qty: 0, value: 0 };
+    prodMap[key].qty += Number(it.qty) || 0;
+    prodMap[key].value += (Number(it.price) || 0) * (Number(it.qty) || 0);
+  }));
+  const topProducts = Object.values(prodMap).sort((a, b) => b.value - a.value).slice(0, 10);
+
+  // Sprzedaż w ostatnich 30 dniach.
+  const now = Date.now();
+  const last30 = valid.filter(o => o.created_at && (now - new Date(o.created_at).getTime()) <= 30 * 86400000);
+  const revenue30 = last30.reduce((s, o) => s + (Number(o.total) || 0), 0);
+
+  return (
+    <>
+      <div className="page-header"><h1 className="page-title">📈 Statystyki sprzedaży</h1></div>
+      <div className="stats-grid">
+        <div className="stat-card"><div className="stat-value">{fmt(revenue)}</div><div className="stat-label">Przychód (brutto, bez anulowanych)</div></div>
+        <div className="stat-card"><div className="stat-value">{count}</div><div className="stat-label">Liczba zamówień</div></div>
+        <div className="stat-card"><div className="stat-value">{fmt(avg)}</div><div className="stat-label">Średnia wartość zamówienia</div></div>
+        <div className="stat-card"><div className="stat-value">{fmt(revenue30)}</div><div className="stat-label">Przychód (30 dni)</div></div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Zamówienia wg statusu</h3>
+        <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+          {Object.keys(byStatus).length === 0 ? <span className="text-muted">Brak zamówień</span>
+            : Object.entries(byStatus).map(([s, n]) => (
+              <span key={s} className={`badge ${s === "Zrealizowane" ? "badge-green" : s === "Anulowane" ? "badge-red" : s === "W realizacji" ? "badge-blue" : "badge-yellow"}`}>{s}: {n}</span>
+            ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Najlepiej sprzedające się produkty</h3>
+        {topProducts.length === 0 ? <div className="empty-state"><div className="icon">📦</div>Brak danych sprzedażowych</div>
+          : <div className="table-wrap"><table>
+              <thead><tr><th>Produkt</th><th>Sprzedana ilość</th><th>Wartość</th></tr></thead>
+              <tbody>{topProducts.map((p, i) => (
+                <tr key={i}><td><strong>{p.name}</strong></td><td>{p.qty}</td><td className="font-bold">{fmt(p.value)}</td></tr>
+              ))}</tbody>
+            </table></div>}
+      </div>
     </>
   );
 }
@@ -3506,6 +3617,7 @@ function OrdersPage({ orders, setOrders, isAdmin, units, contactInfo, showAlert 
               </div>
             )}
             <div style={{ marginTop: 10, textAlign: "right", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+              {o.paymentTermDays > 0 && <span className="badge badge-blue" style={{ marginRight: 12 }}>💳 Termin płatności: {o.paymentTermDays} dni</span>}
               {o.discount > 0 && <span className="text-sm" style={{ color: "var(--success)", marginRight: 12 }}>Rabat {o.discount}%: −{fmt(o.discountAmt)}</span>}
               <span className="text-sm text-muted" style={{ marginRight: 12 }}>
                 Dostawa: {o.freeShipping ? <span style={{ color: "var(--success)", fontWeight: 600 }}>Gratis</span> : fmt(o.shippingCost || 0)}
