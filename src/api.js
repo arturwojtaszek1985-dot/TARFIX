@@ -299,6 +299,48 @@ export async function updateComplaintStatus(id, status) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// OPINIE I OCENY PRODUKTÓW
+// ════════════════════════════════════════════════════════════════════════
+export async function createReview(review) {
+  const { error } = await supabase.from("reviews").insert(review);
+  if (error) throw error;
+}
+export async function fetchReviews(productId) {
+  const { data, error } = await supabase.from("reviews").select("*").eq("product_id", productId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+export async function deleteReview(id) {
+  const { error } = await supabase.from("reviews").delete().eq("id", id);
+  if (error) throw error;
+}
+// Mapa ocen { [productId]: { avg, count } } — do gwiazdek na kartach.
+export async function fetchProductRatings() {
+  const { data, error } = await supabase.from("product_ratings").select("*");
+  if (error) throw error;
+  const map = {};
+  (data || []).forEach(r => { map[r.product_id] = { avg: Number(r.avg_rating) || 0, count: Number(r.review_count) || 0 }; });
+  return map;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ZAPYTANIA OFERTOWE
+// ════════════════════════════════════════════════════════════════════════
+export async function createQuoteRequest(q) {
+  const { error } = await supabase.from("quote_requests").insert(q);
+  if (error) throw error;
+}
+export async function fetchQuoteRequests() {
+  const { data, error } = await supabase.from("quote_requests").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+export async function updateQuoteStatus(id, status) {
+  const { error } = await supabase.from("quote_requests").update({ status }).eq("id", id);
+  if (error) throw error;
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // POTWIERDZENIE ZAMÓWIENIA E-MAILEM (Edge Function + Resend)
 // ════════════════════════════════════════════════════════════════════════
 // Wywołuje funkcję serwerową w Supabase, która wysyła e-mail przez Resend.

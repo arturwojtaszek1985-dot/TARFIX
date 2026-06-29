@@ -317,6 +317,11 @@ const css = `
   .footer-link:hover{color:var(--primary)}
   .cookie-bar{position:fixed;left:0;right:0;bottom:0;z-index:200;background:#1e293b;color:#e2e8f0;padding:14px 18px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;box-shadow:0 -4px 16px rgba(0,0,0,.15)}
   .cookie-bar a{color:#93c5fd;cursor:pointer;text-decoration:underline}
+  .stars{display:inline-flex;align-items:center;gap:1px;line-height:1}
+  .star{color:#d1d5db;font-size:1rem}
+  .star.full{color:#f59e0b}
+  .star-btn{background:none;border:none;cursor:pointer;font-size:1.6rem;color:#d1d5db;padding:0 2px;line-height:1}
+  .star-btn.on{color:#f59e0b}
   .product-footer{padding:10px 12px;border-top:1px solid var(--border);background:#fafafa}
   .product-sku{font-size:.72rem;color:var(--muted);font-family:monospace}
 
@@ -520,6 +525,7 @@ export default function App() {
   const [users, setUsers] = useState(INITIAL_USERS);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
   const [omnibusFloors, setOmnibusFloors] = useState({});
+  const [productRatings, setProductRatings] = useState({});
   const [units, setUnits] = useState(DEFAULT_UNITS);
   const [categories, setCategories] = useState([
     { name: "Elektronika", subcategories: ["Laptopy", "Audio", "Smartwatche"] },
@@ -559,6 +565,12 @@ export default function App() {
           if (!cancelled) setOmnibusFloors(floors || {});
         } catch (e) {
           console.warn("Nie udało się pobrać najniższych cen z 30 dni (Omnibus):", e.message);
+        }
+        try {
+          const ratings = await api.fetchProductRatings();
+          if (!cancelled) setProductRatings(ratings || {});
+        } catch (e) {
+          console.warn("Nie udało się pobrać ocen produktów:", e.message);
         }
         if (dbProducts && dbProducts.length > 0) {
           setProducts(dbProducts.map(p => ({
@@ -849,6 +861,7 @@ export default function App() {
                 <button className={`btn btn-ghost ${page === "users" ? "active" : ""}`} onClick={() => setPage("users")}>👥 Klienci</button>
                 <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>
                 <button className={`btn btn-ghost ${page === "stats" ? "active" : ""}`} onClick={() => setPage("stats")}>📈 Statystyki</button>
+                <button className={`btn btn-ghost ${page === "quotes" ? "active" : ""}`} onClick={() => setPage("quotes")}>📝 Zapytania</button>
               </>}
               {!isAdmin && !isGuest && <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>}
             </div>
@@ -886,14 +899,15 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} />}
-          {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} omnibusFloors={omnibusFloors} />}
+          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} />}
+          {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} omnibusFloors={omnibusFloors} productRatings={productRatings} currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
           {page === "products" && isAdmin && <AdminProducts products={products} setProducts={setProducts} categories={categories} setCategories={setCategories} units={units} setUnits={setUnits} showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} />}
           {page === "users" && isAdmin && <AdminUsers showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} currentUser={currentUser} />}
           {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} setOrders={setOrders} isAdmin={isAdmin} units={units} contactInfo={contactInfo} showAlert={showAlert} />}
           {page === "stats" && isAdmin && <StatsPage currentUser={currentUser} showAlert={showAlert} />}
+          {page === "quotes" && isAdmin && <QuoteAdminPage showAlert={showAlert} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
           {page === "reklamacje" && <ReklamacjePage currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "terms" && <StaticContentPage title="📄 Regulamin sklepu" settingKey="terms_content" isAdmin={isAdmin} showAlert={showAlert} />}
@@ -1800,7 +1814,18 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
 }
 
 
-function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors }) {
+// ── GWIAZDKI OCENY (wyświetlanie) ────────────────────────────────────────────
+function Stars({ value = 0, count }) {
+  const v = Math.round(value);
+  return (
+    <span className="stars" title={value ? `${value} / 5` : "Brak ocen"}>
+      {[1, 2, 3, 4, 5].map(n => <span key={n} className={`star ${n <= v ? "full" : ""}`}>★</span>)}
+      {count != null && <span className="text-sm text-muted" style={{ marginLeft: 5 }}>{count > 0 ? `${value} (${count})` : "brak opinii"}</span>}
+    </span>
+  );
+}
+
+function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors, productRatings }) {
   const [bannerEditing, setBannerEditing] = useState(false);
   const [bannerForm, setBannerForm] = useState(bannerInfo);
   const bannerFileRef = useRef(null);
@@ -1968,6 +1993,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                     <div className="product-emoji product-link" onClick={() => onOpenDetail(p.id)}>{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
                     <div className="product-body">
                       <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a></div>
+                      {productRatings && productRatings[p.id] && <div style={{ margin: "2px 0" }}><Stars value={productRatings[p.id].avg} count={productRatings[p.id].count} /></div>}
                       <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
                         <span className="tag">{p.category}</span>
                         {p.subcategory && <span className="tag tag-sub">{p.subcategory}</span>}
@@ -2014,9 +2040,74 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
 
 // ── IMPORT CSV (główna nowość) ─────────────────────────────────────────────────
 // ── STRONA SZCZEGÓŁÓW PRODUKTU ────────────────────────────────────────────────
-function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFloors }) {
+function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFloors, productRatings, currentUser, isGuest, isAdmin, showAlert }) {
   const [combo, setCombo] = useState({});
-  useEffect(() => { setCombo({}); }, [product?.id]);
+  const [reviews, setReviews] = useState([]);
+  const [reviewForm, setReviewForm] = useState({ name: "", rating: 0, comment: "" });
+  const [reviewSending, setReviewSending] = useState(false);
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [quoteForm, setQuoteForm] = useState({ quantity: "", name: "", email: "", phone: "", company: "", message: "" });
+  const [quoteSending, setQuoteSending] = useState(false);
+
+  useEffect(() => {
+    setCombo({});
+    setReviewForm({ name: !isGuest && currentUser ? (currentUser.name || "") : "", rating: 0, comment: "" });
+    setQuoteOpen(false);
+    setQuoteForm({ quantity: "", name: !isGuest && currentUser ? (currentUser.name || "") : "", email: !isGuest && currentUser ? (currentUser.email || "") : "", phone: "", company: "", message: "" });
+    if (!product) { setReviews([]); return; }
+    let cancelled = false;
+    (async () => {
+      try { const r = await api.fetchReviews(product.id); if (!cancelled) setReviews(r || []); }
+      catch (e) { if (!cancelled) setReviews([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [product?.id]);
+
+  const submitReview = async () => {
+    if (!reviewForm.name.trim()) return showAlert("Podaj imię/nazwę.", "danger");
+    if (!reviewForm.rating) return showAlert("Wybierz ocenę (gwiazdki).", "danger");
+    setReviewSending(true);
+    try {
+      await api.createReview({
+        product_id: product.id, user_id: isGuest ? null : currentUser?.id || null,
+        author_name: reviewForm.name.trim(), rating: reviewForm.rating, comment: reviewForm.comment.trim() || null,
+      });
+      const r = await api.fetchReviews(product.id);
+      setReviews(r || []);
+      setReviewForm(f => ({ ...f, rating: 0, comment: "" }));
+      showAlert("Dziękujemy za opinię!", "success");
+    } catch (e) {
+      showAlert("Nie udało się dodać opinii: " + (e?.message || ""), "danger");
+    } finally {
+      setReviewSending(false);
+    }
+  };
+
+  const deleteReview = async (id) => {
+    try { await api.deleteReview(id); setReviews(prev => prev.filter(r => r.id !== id)); showAlert("Opinia usunięta."); }
+    catch (e) { showAlert("Nie udało się usunąć opinii: " + e.message, "danger"); }
+  };
+
+  const submitQuote = async () => {
+    if (!quoteForm.name.trim() || !quoteForm.email.trim()) return showAlert("Podaj imię i e-mail.", "danger");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(quoteForm.email)) return showAlert("Podaj poprawny e-mail.", "danger");
+    setQuoteSending(true);
+    try {
+      await api.createQuoteRequest({
+        user_id: isGuest ? null : currentUser?.id || null, product_id: product.id, product_name: product.name,
+        quantity: quoteForm.quantity ? +quoteForm.quantity : null, name: quoteForm.name.trim(), email: quoteForm.email.trim(),
+        phone: quoteForm.phone || null, company: quoteForm.company || null, message: quoteForm.message || null,
+      });
+      showAlert("Zapytanie ofertowe wysłane. Odezwiemy się z wyceną.", "success");
+      setQuoteOpen(false);
+      setQuoteForm(f => ({ ...f, quantity: "", message: "" }));
+    } catch (e) {
+      showAlert("Nie udało się wysłać zapytania: " + (e?.message || ""), "danger");
+    } finally {
+      setQuoteSending(false);
+    }
+  };
+
   if (!product) {
     return (
       <div className="empty-state">
@@ -2026,6 +2117,8 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
       </div>
     );
   }
+
+  const ratingInfo = productRatings ? productRatings[product.id] : null;
 
   const promo = hasPromo(product) && !hasVariants(product);
   const base = effPrice(product);
@@ -2149,6 +2242,63 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
               </table>
             </>
           )}
+
+          {/* ZAPYTANIE OFERTOWE (przy większych ilościach) */}
+          <div className="card" style={{ marginTop: 24, background: "#f8fafc" }}>
+            <div className="flex items-center gap-3" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <div>
+                <strong>📝 Potrzebujesz większej ilości?</strong>
+                <div className="text-sm text-muted">Wyślij zapytanie ofertowe — przygotujemy indywidualną wycenę.</div>
+              </div>
+              <button className="btn btn-secondary" onClick={() => setQuoteOpen(o => !o)}>{quoteOpen ? "Zwiń" : "Zapytaj o ofertę"}</button>
+            </div>
+            {quoteOpen && (
+              <div style={{ marginTop: 14 }}>
+                <div className="flex gap-3">
+                  <div className="form-group" style={{ flex: 1 }}><label className="form-label">Ilość</label><input className="form-input" type="number" min="1" value={quoteForm.quantity} onChange={e => setQuoteForm(f => ({ ...f, quantity: e.target.value }))} placeholder="np. 500" /></div>
+                  <div className="form-group" style={{ flex: 1 }}><label className="form-label">Firma</label><input className="form-input" value={quoteForm.company} onChange={e => setQuoteForm(f => ({ ...f, company: e.target.value }))} placeholder="opcjonalnie" /></div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="form-group" style={{ flex: 1 }}><label className="form-label">Imię i nazwisko *</label><input className="form-input" value={quoteForm.name} onChange={e => setQuoteForm(f => ({ ...f, name: e.target.value }))} /></div>
+                  <div className="form-group" style={{ flex: 1 }}><label className="form-label">E-mail *</label><input className="form-input" type="email" value={quoteForm.email} onChange={e => setQuoteForm(f => ({ ...f, email: e.target.value }))} /></div>
+                </div>
+                <div className="form-group"><label className="form-label">Telefon</label><input className="form-input" type="tel" value={quoteForm.phone} onChange={e => setQuoteForm(f => ({ ...f, phone: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Wiadomość</label><textarea className="form-input" style={{ minHeight: 80 }} value={quoteForm.message} onChange={e => setQuoteForm(f => ({ ...f, message: e.target.value }))} placeholder="Dodatkowe informacje, np. termin, parametry…" /></div>
+                <button className="btn btn-primary" onClick={submitQuote} disabled={quoteSending}>{quoteSending ? "Wysyłanie…" : "📨 Wyślij zapytanie"}</button>
+              </div>
+            )}
+          </div>
+
+          {/* OPINIE I OCENY */}
+          <div style={{ marginTop: 28 }}>
+            <h2 className="pdp-section-title">Opinie i oceny {ratingInfo && ratingInfo.count > 0 && <span style={{ fontWeight: 400 }}>— <Stars value={ratingInfo.avg} count={ratingInfo.count} /></span>}</h2>
+
+            {reviews.length === 0 ? <p className="text-muted">Brak opinii. Bądź pierwszy!</p>
+              : reviews.map(r => (
+                <div key={r.id} style={{ borderBottom: "1px solid var(--border)", padding: "10px 0" }}>
+                  <div className="flex items-center gap-3" style={{ justifyContent: "space-between" }}>
+                    <div><strong>{r.author_name}</strong> <Stars value={r.rating} /></div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted">{new Date(r.created_at).toLocaleDateString("pl-PL")}</span>
+                      {isAdmin && <button className="btn btn-danger btn-sm" onClick={() => deleteReview(r.id)}>🗑️</button>}
+                    </div>
+                  </div>
+                  {r.comment && <div style={{ marginTop: 4 }}>{r.comment}</div>}
+                </div>
+              ))}
+
+            <div className="card" style={{ marginTop: 16 }}>
+              <strong>Dodaj opinię</strong>
+              <div className="form-group" style={{ marginTop: 8 }}><label className="form-label">Twoja ocena *</label>
+                <div>{[1, 2, 3, 4, 5].map(n => (
+                  <button key={n} type="button" className={`star-btn ${n <= reviewForm.rating ? "on" : ""}`} onClick={() => setReviewForm(f => ({ ...f, rating: n }))}>★</button>
+                ))}</div>
+              </div>
+              <div className="form-group"><label className="form-label">Imię / nazwa *</label><input className="form-input" value={reviewForm.name} onChange={e => setReviewForm(f => ({ ...f, name: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Komentarz</label><textarea className="form-input" style={{ minHeight: 80 }} value={reviewForm.comment} onChange={e => setReviewForm(f => ({ ...f, comment: e.target.value }))} placeholder="Napisz, co sądzisz o produkcie…" /></div>
+              <button className="btn btn-primary" onClick={submitReview} disabled={reviewSending}>{reviewSending ? "Wysyłanie…" : "Dodaj opinię"}</button>
+            </div>
+          </div>
         </div>
       </div>
     </>
@@ -3312,6 +3462,48 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+// ── ADMIN: ZAPYTANIA OFERTOWE ───────────────────────────────────────────────
+const QUOTE_STATUSES = ["Nowe", "W trakcie", "Wycenione", "Zamknięte"];
+function QuoteAdminPage({ showAlert }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { const d = await api.fetchQuoteRequests(); if (!cancelled) setList(d || []); }
+      catch (e) { if (!cancelled) showAlert("Nie udało się wczytać zapytań: " + e.message, "danger"); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const changeStatus = async (id, status) => {
+    try { await api.updateQuoteStatus(id, status); setList(prev => prev.map(q => q.id === id ? { ...q, status } : q)); showAlert("Status zaktualizowany."); }
+    catch (e) { showAlert("Nie udało się zmienić statusu: " + e.message, "danger"); }
+  };
+  return (
+    <>
+      <div className="page-header"><h1 className="page-title">📝 Zapytania ofertowe</h1></div>
+      <div className="card">
+        {loading ? <p className="text-muted">Wczytywanie…</p>
+          : list.length === 0 ? <div className="empty-state"><div className="icon">📝</div>Brak zapytań ofertowych</div>
+          : <div className="table-wrap"><table>
+              <thead><tr><th>Data</th><th>Klient</th><th>Produkt</th><th>Ilość</th><th>Wiadomość</th><th>Status</th></tr></thead>
+              <tbody>{list.map(q => (
+                <tr key={q.id}>
+                  <td className="text-sm text-muted">{new Date(q.created_at).toLocaleDateString("pl-PL")}</td>
+                  <td><strong>{q.name}</strong><div className="text-sm text-muted">{q.email}{q.phone ? ` · ${q.phone}` : ""}{q.company ? ` · ${q.company}` : ""}</div></td>
+                  <td>{q.product_name || "—"}</td>
+                  <td>{q.quantity ?? "—"}</td>
+                  <td style={{ maxWidth: 260, whiteSpace: "pre-wrap" }}>{q.message || "—"}</td>
+                  <td><select className="form-select" style={{ padding: "5px 8px" }} value={q.status} onChange={e => changeStatus(q.id, e.target.value)}>{QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                </tr>
+              ))}</tbody>
+            </table></div>}
+      </div>
     </>
   );
 }
