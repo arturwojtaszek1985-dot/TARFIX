@@ -4,6 +4,7 @@ import jsPDF from "jspdf";
 import * as api from "./api";
 
 const LOGO_TARFIX = "/logo.png";
+const LOGO_TARFIX_NAV = "/logo-nav.png";
 
 // ── Dane startowe ─────────────────────────────────────────────────────────────
 // UWAGA: konta użytkowników są teraz zarządzane przez Supabase Auth (tabela
@@ -291,9 +292,9 @@ const css = `
     --shadow-md:0 4px 12px rgba(28,184,138,.15),0 2px 4px rgba(0,0,0,.06);
   }
   .app{min-height:100vh;display:flex;flex-direction:column}
-  .navbar{background:#111722;color:#fff;padding:0 20px;min-height:62px;display:flex;flex-direction:column;justify-content:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.35);border-bottom:3px solid var(--primary)}
+  .navbar{background:#111722;color:#fff;padding:0 20px;min-height:68px;display:flex;flex-direction:column;justify-content:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.35);border-bottom:3px solid var(--primary)}
   .navbar-inner{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;flex-wrap:wrap;padding:8px 0}
-  .navbar-brand{font-size:1.2rem;font-weight:700;letter-spacing:-.5px;color:#fff;white-space:nowrap;flex-shrink:0}
+  .navbar-brand{font-size:1.2rem;font-weight:700;letter-spacing:-.5px;color:#fff;white-space:nowrap;flex-shrink:0;display:flex;align-items:center}
   .navbar-brand span{color:var(--primary)}
   .nav-left{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
   .nav-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
@@ -993,7 +994,7 @@ export default function App() {
       <div className="app">
         <nav className="navbar">
           <div className="navbar-inner">
-            <div className="navbar-brand"><img src={LOGO_TARFIX} alt="TARFIX" style={{ height: 34, verticalAlign: "middle" }} /></div>
+            <div className="navbar-brand"><img src={LOGO_TARFIX_NAV} alt="TARFIX" style={{ height: 48, display: "block" }} /></div>
             <div className="nav-left">
               <button className={`btn btn-ghost ${page === "shop" ? "active" : ""}`} onClick={() => setPage("shop")}>🏪 Sklep</button>
               <button className={`btn btn-ghost ${page === "contact" ? "active" : ""}`} onClick={() => setPage("contact")}>✉️ Kontakt</button>
