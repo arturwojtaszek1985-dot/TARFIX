@@ -647,6 +647,7 @@ export default function App() {
               price: Number(v.price) || 0,
               sku: v.sku || "",
               weight: Number(v.weight) || 0,
+              stock: Number(v.stock) || 0,
             })) : [],
           })));
         }
@@ -2379,13 +2380,14 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                         <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(grossOf(matched.price))} brutto (z VAT 23%)</div>
                         {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — cena netto: {fmt(matched.price * (1 - discount / 100))}</div>}
                         {matched.weight ? <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>waga: {matched.weight} kg</div> : null}
+                        <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Magazyn: <strong>{matched.stock || 0}</strong> {unitLabel}{(matched.stock || 0) <= 0 ? " — brak" : ""}</div>
                       </>
                     : <span style={{ color: "var(--danger)", fontSize: "1rem" }}>Ta kombinacja jest niedostępna</span>}
               </div>
 
-              <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || product.stock === 0}
+              <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || (matched.stock || 0) <= 0}
                 onClick={() => onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: grossOf(matched.price), sku: matched.sku, weight: matched.weight })}>
-                {product.stock === 0 ? "Brak w magazynie" : !allSelected ? "Wybierz opcje powyżej" : !matched ? "Kombinacja niedostępna" : "🛒 Dodaj do koszyka"}
+                {!allSelected ? "Wybierz opcje powyżej" : !matched ? "Kombinacja niedostępna" : (matched.stock || 0) <= 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
               </button>
             </>
           ) : (
@@ -2762,11 +2764,11 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
         let size = extractSize(rname);
         if (!size && baseName && rname.startsWith(baseName)) size = rname.slice(baseName.length).replace(/^[\s\-–,.:]+/, "").trim();
         if (!size) { const i2 = rsku.lastIndexOf("-"); size = i2 >= 0 ? rsku.slice(i2 + 1) : `wariant ${i + 1}`; }
-        return { id: `v_${rsku || i}`, combo: { [attrName]: size }, price: net, sku: rsku, weight: 0, _stock: stock };
+        return { id: `v_${rsku || i}`, combo: { [attrName]: size }, price: net, sku: rsku, weight: 0, stock };
       });
 
       const values = [...new Set(variants.map(v => v.combo[attrName]))];
-      const totalStock = variants.reduce((s, v) => s + (v._stock || 0), 0);
+      const totalStock = variants.reduce((s, v) => s + (v.stock || 0), 0);
       const single = rows.length === 1;
       const existing = products.find(p => p.sku === key);
 
@@ -2774,7 +2776,7 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
         key, baseName, category, description, unit: resolvedUnit.value, unitIsNew: resolvedUnit.isNew,
         single, totalStock, status: existing ? "update" : "new", existingId: existing?.id || null,
         attributeGroups: single ? [] : [{ id: `g_${key}`, name: attrName, values }],
-        variants: single ? [] : variants.map(({ _stock, ...v }) => v),
+        variants: single ? [] : variants,
         singlePrice: single ? (priceType === "brutto" ? variants[0].price * (1 + VAT_RATE) : grossOf(variants[0].price)) : null,
         minNet: variants.length ? Math.min(...variants.map(v => v.price)) : 0,
       });
@@ -3375,7 +3377,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false }); setEditItem(null); setModal("product"); };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
-    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? "") })) : [];
+    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
     setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
@@ -3399,7 +3401,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
           combo[g.name] = val;
         }
         if (price <= 0) return showAlert(`Wariant ${i + 1}: cena netto musi być większa od 0`, "danger");
-        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0 });
+        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0, stock: +v.stock || 0 });
       }
     }
 
@@ -3420,9 +3422,10 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       basePrice = +form.price;
     }
 
+    const effStock = cleanVariants.length > 0 ? cleanVariants.reduce((s, v) => s + (v.stock || 0), 0) : (+form.stock || 0);
     const payload = {
       sku: form.sku, name: form.name, category: form.category, subcategory: form.subcategory,
-      description: form.description, price: basePrice, promo_price: promoVal, stock: +form.stock, weight: +form.weight || 0,
+      description: form.description, price: basePrice, promo_price: promoVal, stock: effStock, weight: +form.weight || 0,
       unit: form.unit, image: form.image, photo: form.photo,
       long_description: form.longDescription, specs: form.specs,
       attribute_groups: cleanGroups,
@@ -3432,10 +3435,10 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     try {
       if (editItem) {
         const updated = await api.updateProduct(editItem.id, payload);
-        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants, published: !!form.published } : p));
+        setProducts(prev => prev.map(p => p.id === editItem.id ? { ...form, id: editItem.id, price: basePrice, promoPrice: promoVal, stock: effStock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants, published: !!form.published } : p));
       } else {
         const created = await api.addProduct(payload);
-        setProducts(prev => [...prev, { ...form, id: created.id, price: basePrice, promoPrice: promoVal, stock: +form.stock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants, published: !!form.published }]);
+        setProducts(prev => [...prev, { ...form, id: created.id, price: basePrice, promoPrice: promoVal, stock: effStock, weight: +form.weight || 0, attributeGroups: cleanGroups, variants: cleanVariants, published: !!form.published }]);
       }
       showAlert(editItem ? (form.published ? "Produkt zaktualizowany" : "Zapisano jako szkic") : (form.published ? "Produkt dodany i opublikowany" : "Produkt zapisany w buforze (szkic)")); setModal(null);
     } catch (err) {
@@ -3760,6 +3763,8 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                           onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], sku: e.target.value }; return { ...f, variants: vs }; })} />
                         <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="0.001" min="0" placeholder="Waga" value={v.weight}
                           onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], weight: e.target.value }; return { ...f, variants: vs }; })} />
+                        <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="1" min="0" placeholder="Stan" value={v.stock}
+                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], stock: e.target.value }; return { ...f, variants: vs }; })} />
                         <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== vi) }))}>🗑️</button>
                       </div>
                     ))}
