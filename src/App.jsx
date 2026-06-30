@@ -928,7 +928,10 @@ export default function App() {
     }
   };
 
-  const cats = ["Wszystkie", ...new Set([...categories.map(c => c.name), ...products.map(p => p.category)])];
+  // Do nawigacji sklepu liczą się tylko produkty opublikowane (szkice/bufor pomijamy),
+  // żeby nie pokazywać kategorii zawierających wyłącznie produkty z bufora.
+  const publishedProducts = products.filter(p => p.published !== false);
+  const cats = ["Wszystkie", ...new Set(publishedProducts.map(p => p.category))];
   const filtered = products.filter(p =>
     (p.published !== false) &&
     (filterCat === "Wszystkie" || p.category === filterCat) &&
@@ -994,7 +997,7 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={products} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} />}
+          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={publishedProducts} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} />}
           {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} omnibusFloors={omnibusFloors} productRatings={productRatings} currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
@@ -1983,7 +1986,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
             <tbody>
               {categories.map(c => {
                 const isActive = filterCat === c;
-                const subcats = categoriesFull.find(cf => cf.name === c)?.subcategories || [];
+                const subcats = (categoriesFull.find(cf => cf.name === c)?.subcategories || []).filter(s => allProducts.some(p => p.category === c && p.subcategory === s));
                 return (
                   <Fragment key={c}>
                     <tr className={`category-row ${isActive ? "active" : ""}`} onClick={() => selectCategory(c)}>
