@@ -194,6 +194,40 @@ const autoSelectCombo = (p) => {
   return combo;
 };
 
+// ── FILTROWANIE PO PARAMETRACH (faceted search) ─────────────────────────────
+const naturalCompare = (a, b) => {
+  const na = parseFloat(String(a).replace(",", ".")), nb = parseFloat(String(b).replace(",", "."));
+  if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+  return String(a).localeCompare(String(b), "pl", { numeric: true });
+};
+// Zbiera dostępne parametry (klucz → wartości) ze specyfikacji i grup atrybutów wariantów.
+const buildFacets = (prods) => {
+  const map = new Map();
+  const add = (k, v) => { if (!k || !v) return; if (!map.has(k)) map.set(k, new Set()); map.get(k).add(String(v)); };
+  prods.forEach(p => {
+    (p.specs || []).forEach(s => add(s.key, s.value));
+    (p.attributeGroups || []).forEach(g => (g.values || []).forEach(v => add(g.name, v)));
+  });
+  return [...map.entries()]
+    .filter(([, set]) => set.size >= 2)
+    .map(([key, set]) => ({ key, values: [...set].sort(naturalCompare) }));
+};
+const productParamValues = (p, key) => {
+  const out = new Set();
+  (p.specs || []).forEach(s => { if (s.key === key && s.value) out.add(String(s.value)); });
+  (p.attributeGroups || []).forEach(g => { if (g.name === key) (g.values || []).forEach(v => v && out.add(String(v))); });
+  return out;
+};
+const matchesParams = (p, paramFilters) => {
+  for (const key in paramFilters) {
+    const sel = paramFilters[key];
+    if (!sel || sel.length === 0) continue;
+    const vals = productParamValues(p, key);
+    if (!sel.some(v => vals.has(v))) return false;
+  }
+  return true;
+};
+
 // VAT: ceny wariantów wpisywane są jako NETTO; brutto liczone automatycznie (23%).
 const VAT_RATE = 0.23;
 const grossOf = (net) => Math.round((+net || 0) * (1 + VAT_RATE) * 100) / 100;
@@ -308,6 +342,9 @@ const css = `
   @media (max-width: 760px){.shop-layout{grid-template-columns:1fr}}
   .category-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:sticky;top:78px}
   .category-sidebar-title{padding:12px 14px;font-weight:700;font-size:.9rem;background:#f8fafc;border-bottom:1px solid var(--border)}
+  .filter-opt{display:flex;align-items:center;gap:7px;font-size:.85rem;padding:3px 0;cursor:pointer;color:var(--text)}
+  .filter-opt input{width:15px;height:15px}
+  .filter-active-badge{display:inline-block;min-width:18px;text-align:center;background:var(--primary);color:#fff;border-radius:9px;font-size:.72rem;padding:0 5px;margin-left:6px}
   .category-table{width:100%;border-collapse:collapse;font-size:.85rem}
   .category-row{cursor:pointer;transition:background .15s}
   .category-row td{padding:10px 14px;border-bottom:1px solid #f0f0f0}
@@ -727,6 +764,7 @@ export default function App() {
   const [searchQ, setSearchQ] = useState("");
   const [filterCat, setFilterCat] = useState("Wszystkie");
   const [filterSubcat, setFilterSubcat] = useState("Wszystkie");
+  const [paramFilters, setParamFilters] = useState({});
   const [lastSync, setLastSync] = useState(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
 
@@ -936,12 +974,15 @@ export default function App() {
   // żeby nie pokazywać kategorii zawierających wyłącznie produkty z bufora.
   const publishedProducts = products.filter(p => p.published !== false);
   const cats = ["Wszystkie", ...new Set(publishedProducts.map(p => p.category))];
-  const filtered = products.filter(p =>
+  // Zestaw przed filtrami parametrów (kategoria/podkategoria/szukaj) — z niego budujemy listę parametrów.
+  const preParamFiltered = products.filter(p =>
     (p.published !== false) &&
     (filterCat === "Wszystkie" || p.category === filterCat) &&
     (filterSubcat === "Wszystkie" || p.subcategory === filterSubcat) &&
     p.name.toLowerCase().includes(searchQ.toLowerCase())
   );
+  const facets = buildFacets(preParamFiltered);
+  const filtered = preParamFiltered.filter(p => matchesParams(p, paramFilters));
 
   if (recoveryMode) return <><style>{css}</style><RecoveryScreen showAlert={showAlert} onDone={() => { setRecoveryMode(false); setCurrentUser(null); }} /></>;
   if (!currentUser) return <><style>{css}</style><LoginPage users={users} setUsers={setUsers} onLogin={setCurrentUser} /></>;
@@ -1001,7 +1042,7 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={publishedProducts} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} />}
+          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={publishedProducts} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} facets={facets} paramFilters={paramFilters} setParamFilters={setParamFilters} />}
           {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} omnibusFloors={omnibusFloors} productRatings={productRatings} currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
@@ -1927,7 +1968,7 @@ function Stars({ value = 0, count }) {
   );
 }
 
-function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors, productRatings }) {
+function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors, productRatings, facets, paramFilters, setParamFilters }) {
   const [bannerEditing, setBannerEditing] = useState(false);
   const [bannerForm, setBannerForm] = useState(bannerInfo);
   const bannerFileRef = useRef(null);
@@ -1970,7 +2011,16 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
   const selectCategory = (c) => {
     setFilterCat(c);
     setFilterSubcat("Wszystkie"); // reset podkategorii przy zmianie kategorii głównej
+    setParamFilters({}); // reset filtrów parametrów — inny zestaw parametrów w nowej kategorii
   };
+  const toggleParam = (key, value) => setParamFilters(prev => {
+    const cur = prev[key] || [];
+    const next = cur.includes(value) ? cur.filter(x => x !== value) : [...cur, value];
+    const out = { ...prev, [key]: next };
+    if (next.length === 0) delete out[key];
+    return out;
+  });
+  const activeFilterCount = Object.values(paramFilters).reduce((n, a) => n + (a ? a.length : 0), 0);
 
   const activeSubcats = categoriesFull.find(c => c.name === filterCat)?.subcategories || [];
   const countFor = (catName) => catName === "Wszystkie" ? allProducts.length : allProducts.filter(p => p.category === catName).length;
@@ -2008,6 +2058,27 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
               })}
             </tbody>
           </table>
+
+          {facets.length > 0 && (
+            <>
+              <div className="category-sidebar-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border)" }}>
+                <span>Filtruj{activeFilterCount > 0 && <span className="filter-active-badge">{activeFilterCount}</span>}</span>
+                {activeFilterCount > 0 && <button className="footer-link" style={{ fontSize: ".78rem" }} onClick={() => setParamFilters({})}>Wyczyść</button>}
+              </div>
+              <div style={{ padding: "8px 14px 14px" }}>
+                {facets.map(f => (
+                  <div key={f.key} style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 600, fontSize: ".82rem", margin: "4px 0 5px" }}>{f.key}</div>
+                    {f.values.map(v => (
+                      <label key={v} className="filter-opt">
+                        <input type="checkbox" checked={(paramFilters[f.key] || []).includes(v)} onChange={() => toggleParam(f.key, v)} /> {v}
+                      </label>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </aside>
 
         <div className="shop-main">
