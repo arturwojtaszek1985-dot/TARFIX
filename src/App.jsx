@@ -2104,20 +2104,28 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                       <div>
                         {isVar ? <>
                           <span className="text-sm text-muted" style={{ marginRight: 6 }}>od</span>
-                          <span className="product-price">{fmt(grossOf(minVariantPrice(p)))}</span>
-                          <span className="text-sm text-muted"> brutto</span>
-                          <div className="text-sm text-muted">{fmt(minVariantPrice(p))} netto · {p.variants.length} wariantów</div>
+                          <span className="product-price">{fmt(minVariantPrice(p))}</span>
+                          <span className="text-sm text-muted"> netto</span>
+                          <div className="text-sm text-muted">{fmt(grossOf(minVariantPrice(p)))} brutto · {p.variants.length} wariantów</div>
                         </> : promo ? <>
-                          <span className="product-price-original">{fmt(p.price)}</span>{" "}
-                          <span className="product-price">{fmt(discount > 0 ? dp : base)}</span>
+                          <span className="product-price-original">{fmt(netOf(p.price))}</span>{" "}
+                          <span className="product-price">{fmt(netOf(discount > 0 ? dp : base))}</span>
+                          <span className="text-sm text-muted"> netto</span>
                           <span className="promo-badge">Promocja</span>
+                          <div className="text-sm text-muted">{fmt(discount > 0 ? dp : base)} brutto</div>
                           {discount > 0 && <div className="product-price-discount">w tym Twój rabat {discount}%</div>}
                           <div className="omnibus-note">Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>
                         </> : (discount > 0 ? <>
-                          <span className="product-price-original">{fmt(base)}</span>{" "}
-                          <span className="product-price">{fmt(dp)}</span>
+                          <span className="product-price-original">{fmt(netOf(base))}</span>{" "}
+                          <span className="product-price">{fmt(netOf(dp))}</span>
+                          <span className="text-sm text-muted"> netto</span>
+                          <div className="text-sm text-muted">{fmt(dp)} brutto</div>
                           <div className="product-price-discount">Oszczędzasz {fmt(base - dp)}</div>
-                        </> : <span className="product-price">{fmt(base)}</span>)}
+                        </> : <>
+                          <span className="product-price">{fmt(netOf(base))}</span>
+                          <span className="text-sm text-muted"> netto</span>
+                          <div className="text-sm text-muted">{fmt(base)} brutto</div>
+                        </>)}
                       </div>
                       <div className="text-sm text-muted">Magazyn: <strong>{p.stock}</strong> {units.find(u => u.value === p.unit)?.label || "szt."}</div>
                     </div>
@@ -2364,12 +2372,12 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
 
               <div className="pdp-price" style={{ marginTop: 8 }}>
                 {!allSelected
-                  ? <><span className="text-sm text-muted">od </span>{fmt(grossOf(minVariantPrice(product)))} <span className="text-sm text-muted">brutto · {fmt(minVariantPrice(product))} netto</span><div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
+                  ? <><span className="text-sm text-muted">od </span>{fmt(minVariantPrice(product))} <span className="text-sm text-muted">netto · {fmt(grossOf(minVariantPrice(product)))} brutto</span><div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
                   : matched
                     ? <>
-                        <span className="product-price">{fmt(grossOf(matched.price))}</span> <span className="text-sm text-muted">brutto</span>
-                        <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(matched.price)} netto + VAT 23%</div>
-                        {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — cena brutto: {fmt(grossOf(matched.price) * (1 - discount / 100))}</div>}
+                        <span className="product-price">{fmt(matched.price)}</span> <span className="text-sm text-muted">netto</span>
+                        <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(grossOf(matched.price))} brutto (z VAT 23%)</div>
+                        {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — cena netto: {fmt(matched.price * (1 - discount / 100))}</div>}
                         {matched.weight ? <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>waga: {matched.weight} kg</div> : null}
                       </>
                     : <span style={{ color: "var(--danger)", fontSize: "1rem" }}>Ta kombinacja jest niedostępna</span>}
@@ -2385,20 +2393,22 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
               <div className="pdp-price">
                 {promo ? (
                   <>
-                    <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(product.price)}</span>{" "}
-                    {fmt(discount > 0 ? discountedPrice : base)}
+                    <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(netOf(product.price))}</span>{" "}
+                    {fmt(netOf(discount > 0 ? discountedPrice : base))}
+                    <span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto</span>
                     <span className="promo-badge">Promocja</span>
-                    {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 w tym Twój rabat {discount}%</div>}
-                    <div className="omnibus-note" style={{ fontSize: ".85rem" }}>Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>
                   </>
                 ) : (discount > 0 ? (
                   <>
-                    <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(base)}</span>{" "}
-                    {fmt(discountedPrice)}
-                    <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — oszczędzasz {fmt(base - discountedPrice)}</div>
+                    <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(netOf(base))}</span>{" "}
+                    {fmt(netOf(discountedPrice))}
+                    <span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto</span>
                   </>
-                ) : fmt(base))}
+                ) : <>{fmt(netOf(base))}<span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto</span></>)}
               </div>
+              <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(discount > 0 ? discountedPrice : base)} brutto (z VAT 23%)</div>
+              {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}%{!promo ? ` — oszczędzasz ${fmt(base - discountedPrice)}` : ""}</div>}
+              {promo && <div className="omnibus-note" style={{ fontSize: ".85rem" }}>Najniższa cena z 30 dni przed obniżką: {fmt(omnibusRef)}</div>}
 
               <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{product.weight ? ` · waga: ${product.weight} kg` : ""}</p>
 
