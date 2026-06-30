@@ -532,6 +532,8 @@ const css = `
   .pdp-image-box img{width:100%;height:100%;object-fit:cover}
   .pdp-image-box .emoji-fallback{font-size:6rem}
   .pdp-title{font-size:1.5rem;font-weight:700;margin-bottom:8px}
+  .pdp-sku{display:inline-flex;align-items:center;gap:6px;margin:4px 0 12px;font-size:.95rem;font-weight:600;color:#0f172a;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:5px 12px;font-family:monospace}
+  .pdp-sku .pdp-sku-label{font-family:inherit;font-weight:600;color:var(--muted)}
   .pdp-price{font-size:1.8rem;font-weight:700;color:var(--primary);margin:14px 0}
   .pdp-section-title{font-size:1.1rem;font-weight:700;margin:28px 0 14px;border-bottom:2px solid var(--primary-light);padding-bottom:8px}
   .pdp-rich-content{font-size:.95rem;line-height:1.7;color:#333}
@@ -2305,8 +2307,10 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
           <div className="flex gap-2 items-center" style={{ flexWrap: "wrap", marginBottom: 6 }}>
             <span className="tag">{product.category}</span>
             {product.subcategory && <span className="tag tag-sub">{product.subcategory}</span>}
-            {product.sku && <span className="product-sku">{product.sku}</span>}
           </div>
+          {(isVar ? (matched?.sku || product.sku) : product.sku) && (
+            <div className="pdp-sku"><span className="pdp-sku-label">SKU:</span> {isVar ? (matched?.sku || product.sku) : product.sku}</div>
+          )}
           <p className="text-muted">{product.description}</p>
 
           {isVar ? (
@@ -2340,7 +2344,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                         <span className="product-price">{fmt(grossOf(matched.price))}</span> <span className="text-sm text-muted">brutto</span>
                         <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(matched.price)} netto + VAT 23%</div>
                         {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — cena brutto: {fmt(grossOf(matched.price) * (1 - discount / 100))}</div>}
-                        {matched.sku && <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>SKU: {matched.sku}{matched.weight ? ` · waga: ${matched.weight} kg` : ""}</div>}
+                        {matched.weight ? <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>waga: {matched.weight} kg</div> : null}
                       </>
                     : <span style={{ color: "var(--danger)", fontSize: "1rem" }}>Ta kombinacja jest niedostępna</span>}
               </div>
@@ -2371,7 +2375,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
               </div>
 
               <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{product.weight ? ` · waga: ${product.weight} kg` : ""}</p>
-              {product.sku && <p className="text-sm text-muted" style={{ marginTop: -6 }}>SKU: {product.sku}</p>}
+
 
               <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} onClick={() => onAdd(product)} disabled={product.stock === 0}>
                 {product.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
