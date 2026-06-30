@@ -2150,7 +2150,16 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
   const [quoteSending, setQuoteSending] = useState(false);
 
   useEffect(() => {
-    setCombo(autoSelectCombo(product));
+    // Deep-link do wariantu: ?sku=... zaznacza konkretny wariant; w innym wypadku auto-wybór.
+    let initialCombo = autoSelectCombo(product);
+    if (product && hasVariants(product) && typeof window !== "undefined") {
+      const skuParam = new URLSearchParams(window.location.search).get("sku");
+      if (skuParam) {
+        const v = (product.variants || []).find(x => String(x.sku || "").toLowerCase() === skuParam.toLowerCase());
+        if (v) initialCombo = { ...v.combo };
+      }
+    }
+    setCombo(initialCombo);
     setReviewForm({ name: !isGuest && currentUser ? (currentUser.name || "") : "", rating: 0, comment: "" });
     setQuoteOpen(false);
     setQuoteForm({ quantity: "", name: !isGuest && currentUser ? (currentUser.name || "") : "", email: !isGuest && currentUser ? (currentUser.email || "") : "", phone: "", company: "", message: "" });
@@ -2163,26 +2172,43 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
     return () => { cancelled = true; };
   }, [product?.id]);
 
+  // Aktualizacja adresu przy wyborze wariantu (?sku=...) — replaceState, bez śmiecenia historią.
+  useEffect(() => {
+    if (!product || typeof window === "undefined" || !hasVariants(product)) return;
+    const m = findVariant(product, combo);
+    const base = window.location.pathname;
+    const target = (m && m.sku) ? `${base}?sku=${encodeURIComponent(m.sku)}` : base;
+    if (window.location.pathname + window.location.search !== target) {
+      window.history.replaceState({}, "", target);
+    }
+  }, [product?.id, combo]);
+
   // ── SCHEMA.ORG PRODUCT (JSON-LD) + tytuł strony + canonical ─────────────────
   useEffect(() => {
     if (!product || typeof document === "undefined") return;
     if (!product.published && !isAdmin) return;
     const prevTitle = document.title;
-    document.title = `${product.name} — TARFIX`;
+    const matched = hasVariants(product) ? findVariant(product, combo) : null;
+    document.title = matched ? `${product.name} ${comboLabel(matched.combo)} — TARFIX` : `${product.name} — TARFIX`;
 
-    const url = window.location.origin + window.location.pathname;
+    const canonicalUrl = window.location.origin + window.location.pathname; // bez ?sku — zawsze główny produkt
     const rating = productRatings ? productRatings[product.id] : null;
     const inStock = (product.stock || 0) > 0;
     const availability = inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock";
 
     let offers;
     if (hasVariants(product)) {
-      const nets = (product.variants || []).map(v => +v.price || 0).filter(n => n > 0);
-      const low = nets.length ? grossOf(Math.min(...nets)) : 0;
-      const high = nets.length ? grossOf(Math.max(...nets)) : 0;
-      offers = { "@type": "AggregateOffer", priceCurrency: "PLN", lowPrice: low, highPrice: high, offerCount: (product.variants || []).length, availability, url };
+      if (matched) {
+        const variantUrl = matched.sku ? `${canonicalUrl}?sku=${encodeURIComponent(matched.sku)}` : canonicalUrl;
+        offers = { "@type": "Offer", priceCurrency: "PLN", price: grossOf(matched.price), availability, url: variantUrl, sku: matched.sku || undefined };
+      } else {
+        const nets = (product.variants || []).map(v => +v.price || 0).filter(n => n > 0);
+        const low = nets.length ? grossOf(Math.min(...nets)) : 0;
+        const high = nets.length ? grossOf(Math.max(...nets)) : 0;
+        offers = { "@type": "AggregateOffer", priceCurrency: "PLN", lowPrice: low, highPrice: high, offerCount: (product.variants || []).length, availability, url: canonicalUrl };
+      }
     } else {
-      offers = { "@type": "Offer", priceCurrency: "PLN", price: effPrice(product), availability, url };
+      offers = { "@type": "Offer", priceCurrency: "PLN", price: effPrice(product), availability, url: canonicalUrl };
     }
 
     const ld = {
@@ -2190,7 +2216,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
       "@type": "Product",
       name: product.name,
       description: product.description || product.name,
-      sku: product.sku || String(product.id),
+      sku: matched?.sku || product.sku || String(product.id),
       brand: { "@type": "Brand", name: "TARFIX" },
       offers,
     };
@@ -2211,14 +2237,14 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
       canonical.setAttribute("data-product", "1");
       document.head.appendChild(canonical);
     }
-    canonical.setAttribute("href", url);
+    canonical.setAttribute("href", canonicalUrl);
 
     return () => {
       document.title = prevTitle;
       script.remove();
       if (canonical) canonical.remove();
     };
-  }, [product?.id, productRatings, reviews]);
+  }, [product?.id, productRatings, reviews, combo]);
 
   const submitReview = async () => {
     if (!reviewForm.name.trim()) return showAlert("Podaj imię/nazwę.", "danger");
