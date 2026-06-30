@@ -640,6 +640,7 @@ export default function App() {
             longDescription: p.long_description || "", specs: p.specs || [],
             promoPrice: p.promo_price != null ? Number(p.promo_price) : null,
             published: p.published !== false,
+            documents: Array.isArray(p.documents) ? p.documents : [],
             attributeGroups: Array.isArray(p.attribute_groups) ? p.attribute_groups : [],
             variants: Array.isArray(p.variants) ? p.variants.map(v => ({
               id: v.id || String(Math.random()).slice(2),
@@ -2441,6 +2442,21 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
             </>
           )}
 
+          {/* DOKUMENTY DO POBRANIA */}
+          {Array.isArray(product.documents) && product.documents.length > 0 && (
+            <>
+              <h2 className="pdp-section-title">📎 Do pobrania</h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {product.documents.map((d, di) => (
+                  <a key={di} href={d.url} target="_blank" rel="noopener noreferrer" download
+                    className="flex items-center gap-2" style={{ padding: "10px 14px", background: "#f8fafc", border: "1px solid var(--border)", borderRadius: 8, textDecoration: "none", color: "var(--primary)", fontWeight: 600 }}>
+                    📄 {d.name} <span className="text-sm text-muted" style={{ marginLeft: "auto" }}>pobierz ↓</span>
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
+
           {/* ZAPYTANIE OFERTOWE (przy większych ilościach) */}
           <div className="card" style={{ marginTop: 24, background: "#f8fafc" }}>
             <div className="flex items-center gap-3" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -3348,10 +3364,11 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [] });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [docUploading, setDocUploading] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const allVisibleIds = products.map(p => p.id);
@@ -3374,7 +3391,25 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     reader.readAsDataURL(file);
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [] }); setEditItem(null); setModal("product"); };
+
+  const uploadDoc = async (file) => {
+    if (!file) return;
+    setDocUploading(true);
+    try {
+      const doc = await api.uploadProductDoc(file);
+      setForm(f => ({ ...f, documents: [...(f.documents || []), doc] }));
+    } catch (err) {
+      showAlert("Nie udało się wgrać pliku: " + err.message, "danger");
+    } finally {
+      setDocUploading(false);
+    }
+  };
+  const removeDoc = async (idx) => {
+    const doc = (form.documents || [])[idx];
+    setForm(f => ({ ...f, documents: (f.documents || []).filter((_, j) => j !== idx) }));
+    if (doc?.path) { try { await api.deleteProductDoc(doc.path); } catch (e) { /* plik osierocony — nieblokujące */ } }
+  };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
@@ -3431,6 +3466,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       attribute_groups: cleanGroups,
       variants: cleanVariants,
       published: !!form.published,
+      documents: form.documents || [],
     };
     try {
       if (editItem) {
@@ -3770,6 +3806,24 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label">📎 Dokumenty techniczne (ETA, DoP, karty katalogowe)</label>
+                <div className="text-sm text-muted" style={{ marginBottom: 8 }}>Wgraj pliki PDF/DOC — klienci pobiorą je ze strony produktu.</div>
+                {(form.documents || []).length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    {(form.documents || []).map((d, di) => (
+                      <div key={di} className="flex items-center gap-2" style={{ padding: "6px 10px", background: "#f8fafc", border: "1px solid var(--border)", borderRadius: 6, marginBottom: 6 }}>
+                        <span style={{ flex: 1 }}>📄 <a href={d.url} target="_blank" rel="noopener noreferrer">{d.name}</a></span>
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => removeDoc(di)}>🗑️</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" disabled={docUploading}
+                  onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; uploadDoc(file); }} />
+                {docUploading && <div className="text-sm text-muted" style={{ marginTop: 6 }}>Wgrywanie…</div>}
               </div>
 
               <div style={{ marginTop: 16, padding: "12px 14px", background: form.published ? "#ecfdf5" : "#fff7ed", border: `1px solid ${form.published ? "#a7f3d0" : "#fed7aa"}`, borderRadius: 8 }}>

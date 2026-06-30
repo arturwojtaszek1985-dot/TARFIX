@@ -185,6 +185,23 @@ export async function deleteProducts(ids) {
   if (error) throw error;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// DOKUMENTY TECHNICZNE (pliki w Supabase Storage, bucket "product-docs")
+// ════════════════════════════════════════════════════════════════════════
+export async function uploadProductDoc(file) {
+  const safeName = (file.name || "plik").replace(/[^\w.\-]+/g, "_");
+  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+  const { error } = await supabase.storage.from("product-docs").upload(path, file, { cacheControl: "3600", upsert: false });
+  if (error) throw error;
+  const { data } = supabase.storage.from("product-docs").getPublicUrl(path);
+  return { name: file.name || safeName, url: data.publicUrl, path };
+}
+export async function deleteProductDoc(path) {
+  if (!path) return;
+  const { error } = await supabase.storage.from("product-docs").remove([path]);
+  if (error) throw error;
+}
+
 // Szybkie przełączenie widoczności produktu w sklepie (szkic / opublikowany).
 export async function setProductPublished(id, published) {
   const { error } = await supabase.from("products").update({ published }).eq("id", id);
