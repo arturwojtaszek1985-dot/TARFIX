@@ -2371,6 +2371,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
               </div>
 
               <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{product.weight ? ` · waga: ${product.weight} kg` : ""}</p>
+              {product.sku && <p className="text-sm text-muted" style={{ marginTop: -6 }}>SKU: {product.sku}</p>}
 
               <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} onClick={() => onAdd(product)} disabled={product.stock === 0}>
                 {product.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
@@ -2552,12 +2553,14 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
   const [detectedEncoding, setDetectedEncoding] = useState(null);
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingNewUnits, setPendingNewUnits] = useState([]);
-  const [variantMode, setVariantMode] = useState(false);
+  const [importMode, setImportMode] = useState("full"); // full / variants / prices
   const [prefixRule, setPrefixRule] = useState("last"); // last / first / chars
   const [prefixN, setPrefixN] = useState(3);
   const [attrName, setAttrName] = useState("Rozmiar");
   const [priceType, setPriceType] = useState("netto"); // netto / brutto (ceny w pliku)
   const [grouped, setGrouped] = useState([]); // produkty z wariantami (podgląd)
+  const [pricePreview, setPricePreview] = useState([]); // dopasowane zmiany cen
+  const [priceUnmatched, setPriceUnmatched] = useState([]); // SKU z pliku bez dopasowania
   const fileRef = useRef();
 
   const FIELDS = [
@@ -2783,6 +2786,94 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
     setStep(4);
   };
 
+  // ── TRYB CEN: aktualizacja cen po SKU (dopasowuje produkty i warianty) ───────
+  const buildPricePreview = () => {
+    if (!rawData) return;
+    // Mapa SKU(lower) -> cena z pliku
+    const priceMap = new Map();
+    rawData.forEach(row => {
+      const sku = String(row[mapping.sku] || "").trim();
+      if (!sku) return;
+      priceMap.set(sku.toLowerCase(), parseNum(row[mapping.price]));
+    });
+    const matched = [];
+    const usedSkus = new Set();
+    products.forEach(p => {
+      if (hasVariants(p)) {
+        (p.variants || []).forEach(v => {
+          const key = String(v.sku || "").trim().toLowerCase();
+          if (key && priceMap.has(key)) {
+            usedSkus.add(key);
+            const raw = priceMap.get(key);
+            const newNet = priceType === "brutto" ? netOf(raw) : raw;
+            if (Math.abs(newNet - (+v.price || 0)) > 0.001) {
+              matched.push({ type: "variant", productId: p.id, variantId: v.id, sku: v.sku, name: `${p.name} · ${comboLabel(v.combo)}`, oldNet: +v.price || 0, newNet });
+            }
+          }
+        });
+      } else {
+        const key = String(p.sku || "").trim().toLowerCase();
+        if (key && priceMap.has(key)) {
+          usedSkus.add(key);
+          const raw = priceMap.get(key);
+          const newGross = priceType === "netto" ? grossOf(raw) : (Math.round(raw * 100) / 100);
+          if (Math.abs(newGross - (+p.price || 0)) > 0.001) {
+            matched.push({ type: "product", productId: p.id, sku: p.sku, name: p.name, oldGross: +p.price || 0, newGross });
+          }
+        }
+      }
+    });
+    const unmatched = [];
+    priceMap.forEach((_, key) => { if (!usedSkus.has(key)) unmatched.push(key); });
+    setPricePreview(matched);
+    setPriceUnmatched(unmatched);
+    setStep(3);
+  };
+
+  const doPriceImport = async () => {
+    // Grupujemy zmiany po produkcie (jeden update na produkt, także gdy zmienia się kilka wariantów).
+    const byProduct = new Map();
+    pricePreview.forEach(m => {
+      if (!byProduct.has(m.productId)) byProduct.set(m.productId, []);
+      byProduct.get(m.productId).push(m);
+    });
+    let changed = 0;
+    try {
+      const newProds = [...products];
+      for (const [pid, changes] of byProduct.entries()) {
+        const idx = newProds.findIndex(p => p.id === pid);
+        if (idx < 0) continue;
+        const prod = newProds[idx];
+        let payload, mappedLocal;
+        if (hasVariants(prod)) {
+          const newVariants = (prod.variants || []).map(v => {
+            const ch = changes.find(c => c.type === "variant" && c.variantId === v.id);
+            return ch ? { ...v, price: ch.newNet } : v;
+          });
+          const minNet = newVariants.length ? Math.min(...newVariants.map(v => +v.price || 0)) : 0;
+          payload = { variants: newVariants, price: grossOf(minNet) };
+          mappedLocal = { ...prod, variants: newVariants, price: grossOf(minNet) };
+        } else {
+          const ch = changes.find(c => c.type === "product");
+          if (!ch) continue;
+          payload = { price: ch.newGross };
+          mappedLocal = { ...prod, price: ch.newGross };
+        }
+        await api.updateProduct(pid, payload);
+        newProds[idx] = mappedLocal;
+        changed += changes.length;
+      }
+      setProducts(newProds);
+    } catch (err) {
+      showAlert("Błąd zapisu cen do bazy danych: " + err.message, "danger");
+      return;
+    }
+    setResult({ added: 0, updated: changed, unchanged: priceUnmatched.length, total: pricePreview.length, priceMode: true });
+    setLastSync({ file: fileName, imported: changed, time: new Date().toLocaleTimeString("pl-PL") });
+    showAlert(`✅ Zaktualizowano ${changed} ${changed === 1 ? "cenę" : "cen"} po SKU`, "success");
+    setStep(4);
+  };
+
   const doImport = async () => {
     // Najpierw rejestrujemy w systemie wszystkie nowe jednostki znalezione w pliku
     if (pendingNewUnits.length > 0) {
@@ -2831,7 +2922,7 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
     setStep(4);
   };
 
-  const reset = () => { setStep(1); setRawData(null); setCsvHeaders([]); setPreview([]); setResult(null); setFileName(""); setEncoding("auto"); setDetectedEncoding(null); setPendingFile(null); setPendingNewUnits([]); setGrouped([]); };
+  const reset = () => { setStep(1); setRawData(null); setCsvHeaders([]); setPreview([]); setResult(null); setFileName(""); setEncoding("auto"); setDetectedEncoding(null); setPendingFile(null); setPendingNewUnits([]); setGrouped([]); setPricePreview([]); setPriceUnmatched([]); };
 
   const downloadSample = () => {
     const blob = new Blob(["\uFEFF" + SAMPLE_CSV], { type: "text/csv;charset=utf-8;" });
@@ -2933,16 +3024,25 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
               <tbody><tr>{csvHeaders.map(h => <td key={h}>{String(rawData[0]?.[h] ?? "")}</td>)}</tr></tbody>
             </table>
           </div>
-          <div className="card" style={{ background: variantMode ? "#eff6ff" : "#f8fafc", border: `1px solid ${variantMode ? "#bfdbfe" : "var(--border)"}`, marginTop: 14 }}>
-            <label className="flex items-center gap-3" style={{ cursor: "pointer", margin: 0 }}>
-              <input type="checkbox" checked={variantMode} onChange={e => setVariantMode(e.target.checked)} style={{ width: 18, height: 18 }} />
-              <span><strong>🧩 Importuj jako warianty</strong><div className="text-sm text-muted">Grupuje wiersze po prefiksie SKU w jeden produkt z wariantami (rozmiar wyciągany z nazwy). Import trafia do bufora (szkice).</div></span>
-            </label>
-            {variantMode && (
+          <div className="card" style={{ background: "#f8fafc", border: "1px solid var(--border)", marginTop: 14 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Tryb importu</div>
+            <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+              <label className={`attr-tile ${importMode === "full" ? "active" : ""}`} style={{ cursor: "pointer" }}>
+                <input type="radio" name="impmode" checked={importMode === "full"} onChange={() => setImportMode("full")} style={{ marginRight: 6 }} />📦 Pełny import produktów
+              </label>
+              <label className={`attr-tile ${importMode === "variants" ? "active" : ""}`} style={{ cursor: "pointer" }}>
+                <input type="radio" name="impmode" checked={importMode === "variants"} onChange={() => setImportMode("variants")} style={{ marginRight: 6 }} />🧩 Import jako warianty
+              </label>
+              <label className={`attr-tile ${importMode === "prices" ? "active" : ""}`} style={{ cursor: "pointer" }}>
+                <input type="radio" name="impmode" checked={importMode === "prices"} onChange={() => setImportMode("prices")} style={{ marginRight: 6 }} />💰 Aktualizacja cen (po SKU)
+              </label>
+            </div>
+
+            {importMode === "variants" && (
               <div style={{ marginTop: 12 }}>
+                <div className="text-sm text-muted" style={{ marginBottom: 8 }}>Grupuje wiersze po prefiksie SKU w jeden produkt z wariantami (rozmiar wyciągany z nazwy). Import trafia do bufora (szkice).</div>
                 <div className="mapping-row" style={{ marginBottom: 8 }}>
-                  <span className="mapping-label">Grupuj po prefiksie SKU</span>
-                  <span className="mapping-arrow">→</span>
+                  <span className="mapping-label">Grupuj po prefiksie SKU</span><span className="mapping-arrow">→</span>
                   <select className="form-select" style={{ flex: 1 }} value={prefixRule} onChange={e => setPrefixRule(e.target.value)}>
                     <option value="last">do ostatniego myślnika (WKR-CIES-6x40 → WKR-CIES)</option>
                     <option value="first">do pierwszego myślnika (WKR-6x40 → WKR)</option>
@@ -2968,17 +3068,30 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
                 </div>
               </div>
             )}
+
+            {importMode === "prices" && (
+              <div style={{ marginTop: 12 }}>
+                <div className="text-sm text-muted" style={{ marginBottom: 8 }}>Dopasuje wiersze do istniejących produktów <strong>i wariantów po SKU</strong> i zmieni tylko cenę. Reszta danych produktu pozostaje bez zmian. Potrzebne kolumny: <strong>SKU</strong> i <strong>cena</strong> (mapowanie wyżej).</div>
+                <div className="mapping-row">
+                  <span className="mapping-label">Ceny w pliku to</span><span className="mapping-arrow">→</span>
+                  <select className="form-select" style={{ flex: 1 }} value={priceType} onChange={e => setPriceType(e.target.value)}>
+                    <option value="netto">netto</option>
+                    <option value="brutto">brutto</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3 mt-4">
-            <button className="btn btn-primary" onClick={variantMode ? buildVariantPreview : buildPreview}>Dalej: Podgląd zmian →</button>
+            <button className="btn btn-primary" onClick={importMode === "variants" ? buildVariantPreview : importMode === "prices" ? buildPricePreview : buildPreview}>Dalej: Podgląd zmian →</button>
             <button className="btn btn-secondary" onClick={reset}>← Wróć</button>
           </div>
         </div>
       )}
 
       {/* KROK 3 — Podgląd */}
-      {step === 3 && variantMode && (
+      {step === 3 && importMode === "variants" && (
         <div className="card">
           <h3 className="card-title">Podgląd grupowania — sprawdź zanim zaimportujesz</h3>
           <div className="info-box mb-3">
@@ -3013,8 +3126,49 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
         </div>
       )}
 
+      {/* KROK 3 — Podgląd cen (po SKU) */}
+      {step === 3 && importMode === "prices" && (
+        <div className="card">
+          <h3 className="card-title">Podgląd zmian cen — dopasowano po SKU</h3>
+          <div className="info-box mb-3">
+            Dopasowano <strong>{pricePreview.length}</strong> {pricePreview.length === 1 ? "pozycję" : "pozycji"} do zmiany.
+            {priceUnmatched.length > 0 && <> Z pliku <strong>{priceUnmatched.length}</strong> SKU nie pasuje do żadnego produktu/wariantu (pominięte).</>}
+          </div>
+          {pricePreview.length === 0 ? (
+            <div className="empty-state"><div className="icon">💰</div>Brak zmian — żaden SKU z pliku nie pasuje, albo ceny są już aktualne.</div>
+          ) : (
+            <div className="preview-table-wrap" style={{ maxHeight: 420 }}>
+              <table className="preview-table">
+                <thead><tr><th>Typ</th><th>SKU</th><th>Produkt / wariant</th><th>Cena teraz</th><th>Nowa cena</th></tr></thead>
+                <tbody>
+                  {pricePreview.map((m, i) => (
+                    <tr key={i}>
+                      <td><span className={`badge ${m.type === "variant" ? "badge-blue" : "badge-gray"}`}>{m.type === "variant" ? "wariant" : "produkt"}</span></td>
+                      <td className="text-sm" style={{ fontFamily: "monospace" }}>{m.sku}</td>
+                      <td>{m.name}</td>
+                      <td className="text-sm text-muted">{m.type === "variant" ? `${fmt(m.oldNet)} netto` : `${fmt(m.oldGross)} brutto`}</td>
+                      <td className="font-bold">{m.type === "variant" ? `${fmt(m.newNet)} netto` : `${fmt(m.newGross)} brutto`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {priceUnmatched.length > 0 && (
+            <details style={{ marginTop: 12 }}>
+              <summary className="text-sm text-muted" style={{ cursor: "pointer" }}>Pokaż {priceUnmatched.length} niedopasowanych SKU z pliku</summary>
+              <div className="text-sm text-muted" style={{ marginTop: 6, fontFamily: "monospace", maxHeight: 120, overflow: "auto" }}>{priceUnmatched.join(", ")}</div>
+            </details>
+          )}
+          <div className="flex gap-3 mt-4">
+            <button className="btn btn-primary" onClick={doPriceImport} disabled={pricePreview.length === 0}>💰 Zaktualizuj {pricePreview.length} cen</button>
+            <button className="btn btn-secondary" onClick={() => setStep(2)}>← Wróć do ustawień</button>
+          </div>
+        </div>
+      )}
+
       {/* KROK 3 — Podgląd */}
-      {step === 3 && !variantMode && (
+      {step === 3 && importMode === "full" && (
         <div className="card">
           <h3 className="card-title">Podgląd zmian</h3>
           <div className="changes-summary">
