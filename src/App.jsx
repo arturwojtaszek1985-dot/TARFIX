@@ -393,7 +393,7 @@ const css = `
   .product-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px);border-color:var(--primary-mid)}
   .product-emoji{font-size:3rem;text-align:center;padding:20px 0 14px;background:#f2fbf7;border-bottom:1px solid #cdeee0;overflow:hidden;transition:opacity .15s}
   .product-emoji.product-link:hover{opacity:.85}
-  .product-photo{width:100%;height:120px;object-fit:cover;display:block}
+  .product-photo{width:100%;height:150px;object-fit:contain;object-position:center;display:block;background:#fff}
   .product-photo-thumb{width:32px;height:32px;object-fit:cover;border-radius:6px;margin-right:7px;vertical-align:middle}
   .cart-item-photo{width:38px;height:38px;object-fit:cover;border-radius:6px}
   .photo-upload-row{display:flex;gap:14px;align-items:flex-start}
@@ -577,7 +577,7 @@ const css = `
   .pdp-grid{display:grid;grid-template-columns:380px 1fr;gap:32px;align-items:start}
   @media (max-width: 860px){.pdp-grid{grid-template-columns:1fr}}
   .pdp-image-box{background:#f2fbf7;border:1px solid #cdeee0;border-radius:var(--radius);overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:320px}
-  .pdp-image-box img{width:100%;height:100%;object-fit:cover}
+  .pdp-image-box img{width:100%;height:100%;object-fit:contain;object-position:center;background:#fff}
   .pdp-image-box .emoji-fallback{font-size:6rem}
   .pdp-title{font-size:1.5rem;font-weight:700;margin-bottom:8px}
   .pdp-sku{display:inline-flex;align-items:center;gap:6px;margin:4px 0 12px;font-size:.95rem;font-weight:600;color:#0f172a;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:5px 12px;font-family:monospace}
