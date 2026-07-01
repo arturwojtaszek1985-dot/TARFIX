@@ -691,6 +691,7 @@ export default function App() {
             promoPrice: p.promo_price != null ? Number(p.promo_price) : null,
             published: p.published !== false,
             documents: Array.isArray(p.documents) ? p.documents : [],
+            tags: Array.isArray(p.tags) ? p.tags : [],
             attributeGroups: Array.isArray(p.attribute_groups) ? p.attribute_groups : [],
             variants: Array.isArray(p.variants) ? p.variants.map(v => ({
               id: v.id || String(Math.random()).slice(2),
@@ -1019,7 +1020,12 @@ export default function App() {
     (p.published !== false) &&
     (filterCat === "Wszystkie" || p.category === filterCat) &&
     (filterSubcat === "Wszystkie" || p.subcategory === filterSubcat) &&
-    p.name.toLowerCase().includes(searchQ.toLowerCase())
+    (() => {
+      const q = searchQ.trim().toLowerCase();
+      if (!q) return true;
+      const hay = [p.name, p.sku, p.description, p.category, p.subcategory, ...(Array.isArray(p.tags) ? p.tags : [])].map(x => String(x || "").toLowerCase());
+      return hay.some(h => h.includes(q));
+    })()
   );
   const facets = buildFacets(preParamFiltered);
   const filtered = preParamFiltered.filter(p => matchesParams(p, paramFilters));
@@ -2394,6 +2400,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
       offers,
     };
     if (product.category) ld.category = product.category;
+    if (Array.isArray(product.tags) && product.tags.length) ld.keywords = product.tags.join(", ");
     if (typeof product.photo === "string" && /^https?:\/\//.test(product.photo)) ld.image = product.photo;
     if (rating && rating.count > 0) ld.aggregateRating = { "@type": "AggregateRating", ratingValue: rating.avg, reviewCount: rating.count };
 
@@ -2618,6 +2625,17 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                 ))}
               </div>
             </>
+          )}
+
+          {Array.isArray(product.tags) && product.tags.length > 0 && (
+            <div style={{ marginTop: 22 }}>
+              <h2 className="pdp-section-title" style={{ fontSize: "1rem" }}>🏷️ Powiązane hasła</h2>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                {product.tags.map(t => (
+                  <span key={t} className="badge badge-gray" style={{ fontSize: ".82rem" }}>{t}</span>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* ZAPYTANIE OFERTOWE (przy większych ilościach) */}
@@ -3527,11 +3545,12 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], priceNet: "" });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], priceNet: "" });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [docUploading, setDocUploading] = useState(false);
+  const [tagInput, setTagInput] = useState("");
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const allVisibleIds = products.map(p => p.id);
@@ -3554,7 +3573,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     reader.readAsDataURL(file);
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], priceNet: "" }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], priceNet: "" }); setEditItem(null); setModal("product"); };
 
   const uploadDoc = async (file) => {
     if (!file) return;
@@ -3615,7 +3634,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
     const gorder = (groups || []).map(g => g.name);
     vars.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; });
-    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], attributeGroups: groups, variants: vars });
+    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
   const save = async () => {
@@ -3671,6 +3690,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       variants: cleanVariants,
       published: !!form.published,
       documents: form.documents || [],
+      tags: [...new Set((form.tags || []).map(t => String(t).trim()).filter(Boolean))],
     };
     try {
       if (editItem) {
@@ -3905,6 +3925,31 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
               </div>
               <button type="button" className="btn btn-secondary btn-sm w-full" style={{ marginTop: -6, marginBottom: 14 }} onClick={() => setModal("categories")}>🏷️ Zarządzaj kategoriami i podkategoriami</button>
               <div className="form-group"><label className="form-label">Opis (krótki, widoczny na karcie produktu)</label><input className="form-input" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
+
+              <div className="form-group">
+                <label className="form-label">🏷️ Tagi (SEO / wyszukiwanie)</label>
+                {(form.tags || []).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+                    {(form.tags || []).map(t => (
+                      <span key={t} className="badge badge-blue" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {t}
+                        <span style={{ cursor: "pointer", fontWeight: 700 }} onClick={() => setForm(f => ({ ...f, tags: (f.tags || []).filter(x => x !== t) }))}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <input className="form-input" placeholder="Wpisz tag i naciśnij Enter (np. wkręt ciesielski, TORX, ocynk, do drewna)" value={tagInput}
+                  onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const t = tagInput.trim();
+                      if (t && !(form.tags || []).includes(t)) setForm(f => ({ ...f, tags: [...(f.tags || []), t] }));
+                      setTagInput("");
+                    }
+                  }} />
+                <p className="text-sm text-muted" style={{ marginTop: 4 }}>Słowa kluczowe pod wyszukiwarkę i pozycjonowanie — synonimy, zastosowania, normy (np. „ETA", „DIN 7504"). Widoczne na stronie produktu i uwzględniane w danych strukturalnych.</p>
+              </div>
 
               <div className="form-group">
                 <label className="form-label">Rozszerzony opis (strona produktu)</label>
