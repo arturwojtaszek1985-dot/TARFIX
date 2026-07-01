@@ -391,7 +391,8 @@ const css = `
   .products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px;margin-top:20px}
   .product-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);border:1px solid var(--border);overflow:hidden;transition:box-shadow .2s,transform .2s;display:flex;flex-direction:column}
   .product-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px);border-color:var(--primary-mid)}
-  .product-emoji{font-size:3rem;text-align:center;padding:20px 0 14px;background:#f2fbf7;border-bottom:1px solid #cdeee0;overflow:hidden;transition:opacity .15s}
+  .product-emoji{position:relative;font-size:3rem;text-align:center;padding:20px 0 14px;background:#f2fbf7;border-bottom:1px solid #cdeee0;overflow:hidden;transition:opacity .15s}
+  .img-watermark{position:absolute;bottom:6px;right:6px;height:22px;width:auto;opacity:.9;pointer-events:none;background:rgba(255,255,255,.72);border-radius:4px;padding:2px 4px}
   .product-emoji.product-link:hover{opacity:.85}
   .product-photo{width:100%;height:150px;object-fit:contain;object-position:center;display:block;background:#fff}
   .product-photo-thumb{width:32px;height:32px;object-fit:cover;border-radius:6px;margin-right:7px;vertical-align:middle}
@@ -576,7 +577,8 @@ const css = `
   .pdp-breadcrumb a:hover{text-decoration:underline}
   .pdp-grid{display:grid;grid-template-columns:380px 1fr;gap:32px;align-items:start}
   @media (max-width: 860px){.pdp-grid{grid-template-columns:1fr}}
-  .pdp-image-box{background:#f2fbf7;border:1px solid #cdeee0;border-radius:var(--radius);overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:320px}
+  .pdp-image-box{position:relative;background:#f2fbf7;border:1px solid #cdeee0;border-radius:var(--radius);overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:320px}
+  .pdp-image-box .img-watermark{height:34px;bottom:10px;right:10px;padding:3px 6px}
   .pdp-image-box img{width:100%;height:100%;object-fit:contain;object-position:center;background:#fff}
   .pdp-image-box .emoji-fallback{font-size:6rem}
   .pdp-title{font-size:1.5rem;font-weight:700;margin-bottom:8px}
@@ -2209,7 +2211,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
                 const omnibusRef = floor != null ? floor : p.price;
                 return (
                   <div key={p.id} className="product-card">
-                    <div className="product-emoji product-link" onClick={() => onOpenDetail(p.id)}>{p.photo ? <img src={p.photo} alt={p.name} className="product-photo" /> : p.image}</div>
+                    <div className="product-emoji product-link" onClick={() => onOpenDetail(p.id)}>{p.photo ? <><img src={p.photo} alt={p.name} className="product-photo" /><img src={LOGO_TARFIX} alt="" className="img-watermark" /></> : p.image}</div>
                     <div className="product-body">
                       <div className="product-name"><a className="product-link" onClick={() => onOpenDetail(p.id)}>{p.name}</a>{isAdmin && p.published === false && <span className="badge badge-orange" style={{ marginLeft: 6 }}>Szkic</span>}</div>
                       {productRatings && productRatings[p.id] && <div style={{ margin: "2px 0" }}><Stars value={productRatings[p.id].avg} count={productRatings[p.id].count} /></div>}
@@ -2451,7 +2453,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
       <div className="pdp-grid">
         <div className="pdp-image-box">
           {product.photo
-            ? <img src={product.photo} alt={product.name} />
+            ? <><img src={product.photo} alt={product.name} /><img src={LOGO_TARFIX} alt="" className="img-watermark" /></>
             : <span className="emoji-fallback">{product.image}</span>}
         </div>
 
@@ -2474,7 +2476,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                   <div key={g.id || g.name} className="attr-group">
                     <div className="attr-group-label">{g.name}{combo[g.name] ? `: ${combo[g.name]}` : ""}</div>
                     <div className="attr-tiles">
-                      {(g.values || []).map(val => {
+                      {[...(g.values || [])].sort(naturalCompare).map(val => {
                         const active = combo[g.name] === val;
                         const enabled = avail.has(val);
                         return (
