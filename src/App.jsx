@@ -350,6 +350,12 @@ const css = `
   .category-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:sticky;top:78px}
   .category-sidebar-title{padding:12px 14px;font-weight:700;font-size:.9rem;background:#f8fafc;border-bottom:1px solid var(--border)}
   .filter-opt{display:flex;align-items:center;gap:7px;font-size:.85rem;padding:3px 0;cursor:pointer;color:var(--text)}
+  .qty-stepper{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+  .qty-btn{width:38px;height:40px;border:none;background:#f3f4f6;font-size:1.3rem;line-height:1;cursor:pointer;color:var(--text);transition:background .12s}
+  .qty-btn:hover:not(:disabled){background:#e5e7eb}
+  .qty-btn:disabled{opacity:.45;cursor:not-allowed}
+  .qty-input{width:56px;height:40px;text-align:center;border:none;border-left:1px solid var(--border);border-right:1px solid var(--border);outline:none;font-size:1rem;-moz-appearance:textfield}
+  .qty-input::-webkit-outer-spin-button,.qty-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .filter-toggle-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;background:#2563eb;color:#fff;border:none;font-weight:700;font-size:.92rem;cursor:pointer;transition:background .15s}
   .filter-toggle-btn:hover{background:#1d4ed8}
   .filter-opt input{width:15px;height:15px}
@@ -906,9 +912,10 @@ export default function App() {
     return () => { cancelled = true; };
   }, [page, currentUser?.id, isAdmin, isGuest]);
 
-  const addToCart = (p, variant) => {
+  const addToCart = (p, variant, qty = 1) => {
     // variant = wybrany wariant (z karty/strony produktu) lub brak (produkt bez wariantów).
     // Promocja (Omnibus) dotyczy tylko produktów bez wariantów.
+    const q = Math.max(1, Math.floor(+qty || 1));
     const isVar = !!variant;
     const promo = hasPromo(p) && !isVar && !hasVariants(p);
     const unitPrice = isVar ? (+variant.price || 0) : effPrice(p);
@@ -922,10 +929,10 @@ export default function App() {
     };
     setCart(prev => {
       const ex = prev.find(i => i.id === lineId);
-      if (ex) return prev.map(i => i.id === lineId ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { ...item, qty: 1 }];
+      if (ex) return prev.map(i => i.id === lineId ? { ...i, qty: i.qty + q } : i);
+      return [...prev, { ...item, qty: q }];
     });
-    showAlert(`Dodano "${label}" do koszyka`);
+    showAlert(q > 1 ? `Dodano ${q} × "${label}" do koszyka` : `Dodano "${label}" do koszyka`);
   };
 
   const updateQty = (id, delta) =>
@@ -2321,6 +2328,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
 // ── STRONA SZCZEGÓŁÓW PRODUKTU ────────────────────────────────────────────────
 function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFloors, productRatings, currentUser, isGuest, isAdmin, showAlert }) {
   const [combo, setCombo] = useState({});
+  const [qty, setQty] = useState(1);
   const [reviews, setReviews] = useState([]);
   const [reviewForm, setReviewForm] = useState({ name: "", rating: 0, comment: "" });
   const [reviewSending, setReviewSending] = useState(false);
@@ -2556,8 +2564,17 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                     : <span style={{ color: "var(--danger)", fontSize: "1rem" }}>Ta kombinacja jest niedostępna</span>}
               </div>
 
-              <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || (matched.stock || 0) <= 0}
-                onClick={() => onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: grossOf(matched.price), sku: matched.sku, weight: matched.weight })}>
+              <div className="qty-row" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+                <span className="text-sm text-muted">Ilość:</span>
+                <div className="qty-stepper">
+                  <button type="button" className="qty-btn" onClick={() => setQty(q => Math.max(1, q - 1))} disabled={!matched || (matched.stock || 0) <= 0}>−</button>
+                  <input type="number" min="1" className="qty-input" value={qty} onChange={e => setQty(Math.max(1, Math.floor(+e.target.value || 1)))} disabled={!matched || (matched.stock || 0) <= 0} />
+                  <button type="button" className="qty-btn" onClick={() => setQty(q => q + 1)} disabled={!matched || (matched.stock || 0) <= 0}>+</button>
+                </div>
+                <span className="text-sm text-muted">{unitLabel}</span>
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 12, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || (matched.stock || 0) <= 0}
+                onClick={() => { onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: grossOf(matched.price), sku: matched.sku, weight: matched.weight }, qty); setQty(1); }}>
                 {!allSelected ? "Wybierz opcje powyżej" : !matched ? "Kombinacja niedostępna" : (matched.stock || 0) <= 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
               </button>
             </>
@@ -2586,7 +2603,16 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
               <p className="text-sm text-muted">Magazyn: <strong>{product.stock}</strong> {unitLabel}{product.weight ? ` · waga: ${product.weight} kg` : ""}</p>
 
 
-              <button className="btn btn-primary" style={{ marginTop: 16, padding: "12px 28px", fontSize: "1rem" }} onClick={() => onAdd(product)} disabled={product.stock === 0}>
+              <div className="qty-row" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+                <span className="text-sm text-muted">Ilość:</span>
+                <div className="qty-stepper">
+                  <button type="button" className="qty-btn" onClick={() => setQty(q => Math.max(1, q - 1))} disabled={product.stock === 0}>−</button>
+                  <input type="number" min="1" className="qty-input" value={qty} onChange={e => setQty(Math.max(1, Math.floor(+e.target.value || 1)))} disabled={product.stock === 0} />
+                  <button type="button" className="qty-btn" onClick={() => setQty(q => q + 1)} disabled={product.stock === 0}>+</button>
+                </div>
+                <span className="text-sm text-muted">{unitLabel}</span>
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 12, padding: "12px 28px", fontSize: "1rem" }} onClick={() => { onAdd(product, undefined, qty); setQty(1); }} disabled={product.stock === 0}>
                 {product.stock === 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
               </button>
             </>
