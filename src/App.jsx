@@ -344,8 +344,10 @@ const css = `
   .category-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:sticky;top:78px}
   .category-sidebar-title{padding:12px 14px;font-weight:700;font-size:.9rem;background:#f8fafc;border-bottom:1px solid var(--border)}
   .filter-opt{display:flex;align-items:center;gap:7px;font-size:.85rem;padding:3px 0;cursor:pointer;color:var(--text)}
+  .filter-toggle-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;background:#2563eb;color:#fff;border:none;font-weight:700;font-size:.92rem;cursor:pointer;transition:background .15s}
+  .filter-toggle-btn:hover{background:#1d4ed8}
   .filter-opt input{width:15px;height:15px}
-  .filter-active-badge{display:inline-block;min-width:18px;text-align:center;background:var(--primary);color:#fff;border-radius:9px;font-size:.72rem;padding:0 5px;margin-left:6px}
+  .filter-active-badge{display:inline-block;min-width:18px;text-align:center;background:#fff;color:#2563eb;border-radius:9px;font-size:.72rem;font-weight:700;padding:0 6px;margin-left:8px}
   .category-table{width:100%;border-collapse:collapse;font-size:.85rem}
   .category-row{cursor:pointer;transition:background .15s}
   .category-row td{padding:10px 14px;border-bottom:1px solid #f0f0f0}
@@ -2022,6 +2024,7 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
     return out;
   });
   const activeFilterCount = Object.values(paramFilters).reduce((n, a) => n + (a ? a.length : 0), 0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const activeSubcats = categoriesFull.find(c => c.name === filterCat)?.subcategories || [];
   const countFor = (catName) => catName === "Wszystkie" ? allProducts.length : allProducts.filter(p => p.category === catName).length;
@@ -2061,24 +2064,27 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
           </table>
 
           {facets.length > 0 && (
-            <>
-              <div className="category-sidebar-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border)" }}>
-                <span>Filtruj{activeFilterCount > 0 && <span className="filter-active-badge">{activeFilterCount}</span>}</span>
-                {activeFilterCount > 0 && <button className="footer-link" style={{ fontSize: ".78rem" }} onClick={() => setParamFilters({})}>Wyczyść</button>}
-              </div>
-              <div style={{ padding: "8px 14px 14px" }}>
-                {facets.map(f => (
-                  <div key={f.key} style={{ marginBottom: 12 }}>
-                    <div style={{ fontWeight: 600, fontSize: ".82rem", margin: "4px 0 5px" }}>{f.key}</div>
-                    {f.values.map(v => (
-                      <label key={v} className="filter-opt">
-                        <input type="checkbox" checked={(paramFilters[f.key] || []).includes(v)} onChange={() => toggleParam(f.key, v)} /> {v}
-                      </label>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </>
+            <div style={{ borderTop: "1px solid var(--border)" }}>
+              <button className="filter-toggle-btn" onClick={() => setFiltersOpen(o => !o)}>
+                <span>🔎 Filtruj{activeFilterCount > 0 && <span className="filter-active-badge">{activeFilterCount}</span>}</span>
+                <span style={{ fontSize: ".8rem" }}>{filtersOpen ? "▲ zwiń" : "▼ rozwiń"}</span>
+              </button>
+              {filtersOpen && (
+                <div style={{ padding: "10px 14px 14px" }}>
+                  {activeFilterCount > 0 && <button className="footer-link" style={{ fontSize: ".8rem", marginBottom: 8, display: "inline-block" }} onClick={() => setParamFilters({})}>✕ Wyczyść filtry ({activeFilterCount})</button>}
+                  {facets.map(f => (
+                    <div key={f.key} style={{ marginBottom: 12 }}>
+                      <div style={{ fontWeight: 600, fontSize: ".82rem", margin: "4px 0 5px" }}>{f.key}</div>
+                      {f.values.map(v => (
+                        <label key={v} className="filter-opt">
+                          <input type="checkbox" checked={(paramFilters[f.key] || []).includes(v)} onChange={() => toggleParam(f.key, v)} /> {v}
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </aside>
 
