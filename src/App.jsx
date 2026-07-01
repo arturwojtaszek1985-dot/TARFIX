@@ -61,6 +61,12 @@ const INITIAL_PRODUCTS = [
 ];
 
 // ── Logika przesyłek ──────────────────────────────────────────────────────────
+// Metody dostawy konfigurowane w panelu (Dostawa). cost = brutto, freeThreshold = od kwoty NETTO koszyka.
+const DEFAULT_SHIPPING_METHODS = [
+  { id: "kurier", name: "Kurier", cost: 18, freeThreshold: 500 },
+  { id: "paczkomat", name: "Paczkomat", cost: 14, freeThreshold: 300 },
+  { id: "odbior", name: "Odbiór osobisty", cost: 0, freeThreshold: 0 },
+];
 const PACKAGE_MAX_KG = 25;
 const SHIPPING_PER_PACKAGE = 15;
 const FREE_SHIPPING_THRESHOLD = 400;
@@ -497,6 +503,8 @@ const css = `
   .cat-remove-btn:hover{background:#fdecea}
   .discount-box{background:linear-gradient(135deg,#e3f7ef,#bfe8d4);border-radius:6px;padding:9px 13px;font-size:.85rem;margin-bottom:9px;border:1px solid #9fdcc0}
   .shipping-info-box{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px 13px;font-size:.85rem;margin-bottom:9px}
+  .ship-method{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:7px;cursor:pointer;transition:border-color .12s,background .12s}
+  .ship-method input{width:16px;height:16px}
   .shipping-progress{height:6px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:6px}
   .shipping-progress-bar{height:100%;background:var(--primary);border-radius:999px;transition:width .3s}
 
@@ -770,6 +778,19 @@ export default function App() {
   const [paramFilters, setParamFilters] = useState({});
   const [lastSync, setLastSync] = useState(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [shippingMethods, setShippingMethods] = useState(DEFAULT_SHIPPING_METHODS);
+  const [selectedShipId, setSelectedShipId] = useState(DEFAULT_SHIPPING_METHODS[0].id);
+  useEffect(() => {
+    (async () => {
+      try {
+        const s = await api.fetchSetting("shipping");
+        if (s && Array.isArray(s.methods) && s.methods.length) {
+          setShippingMethods(s.methods);
+          setSelectedShipId(s.methods[0].id);
+        }
+      } catch { /* brak konfiguracji — używamy domyślnych */ }
+    })();
+  }, []);
 
   const showAlert = (msg, type = "success") => {
     setAlert({ msg, type });
@@ -907,11 +928,13 @@ export default function App() {
   const cartDisc = cartSub * (discount / 100);
   const cartAfterDiscount = cartSub - cartDisc;
   const cartWeight = cart.reduce((s, i) => s + (i.weight || 0) * i.qty, 0);
-  const shipment = classifyShipment(cart); // { type, label, count, totalWeight, baseCost, packages? }
-  const freeShipping = cartAfterDiscount >= FREE_SHIPPING_THRESHOLD;
-  const shippingCost = freeShipping ? 0 : shipment.baseCost;
+  const cartNetto = netOf(cartAfterDiscount); // próg darmowej dostawy liczony od netto
+  const selectedMethod = shippingMethods.find(m => m.id === selectedShipId) || shippingMethods[0] || DEFAULT_SHIPPING_METHODS[0];
+  const methodFreeThreshold = +selectedMethod?.freeThreshold || 0;
+  const freeShipping = methodFreeThreshold > 0 && cartNetto >= methodFreeThreshold;
+  const shippingCost = freeShipping ? 0 : (+selectedMethod?.cost || 0);
   const cartTotal = cartAfterDiscount + shippingCost;
-  const amountToFreeShipping = Math.max(0, FREE_SHIPPING_THRESHOLD - cartAfterDiscount);
+  const amountToFreeShipping = methodFreeThreshold > 0 ? Math.max(0, methodFreeThreshold - cartNetto) : 0;
 
   const placeOrder = async (paymentMethod, paymentStatus, guestInfo) => {
     if (!cart.length) return;
@@ -920,7 +943,7 @@ export default function App() {
       id: Date.now(), user: currentUser.name, userId: isGuest ? null : currentUser.id,
       guestEmail: guestInfo?.email || null,
       items: [...cart], subtotal: cartSub, discount, discountAmt: cartDisc,
-      shipmentType: shipment.type, shipmentLabel: shipment.label, shippingCost, freeShipping,
+      shipmentType: selectedMethod?.id || "", shipmentLabel: selectedMethod?.name || "Dostawa", shippingCost, freeShipping,
       total: cartTotal, date: new Date().toLocaleDateString("pl-PL"),
       status: "Przyjęte", paymentMethod, paymentStatus,
       deliveryCompany: delivery.company || null, deliveryName: delivery.name || null,
@@ -1008,6 +1031,7 @@ export default function App() {
                 <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>
                 <button className={`btn btn-ghost ${page === "stats" ? "active" : ""}`} onClick={() => setPage("stats")}>📈 Statystyki</button>
                 <button className={`btn btn-ghost ${page === "quotes" ? "active" : ""}`} onClick={() => setPage("quotes")}>📝 Zapytania</button>
+                <button className={`btn btn-ghost ${page === "shipping" ? "active" : ""}`} onClick={() => setPage("shipping")}>🚚 Dostawa</button>
               </>}
               {!isAdmin && !isGuest && <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>}
             </div>
@@ -1054,6 +1078,7 @@ export default function App() {
           {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} setOrders={setOrders} isAdmin={isAdmin} units={units} contactInfo={contactInfo} showAlert={showAlert} />}
           {page === "stats" && isAdmin && <StatsPage currentUser={currentUser} showAlert={showAlert} />}
           {page === "quotes" && isAdmin && <QuoteAdminPage showAlert={showAlert} />}
+          {page === "shipping" && isAdmin && <ShippingAdminPage showAlert={showAlert} onSaved={(methods) => { setShippingMethods(methods); if (!methods.find(m => m.id === selectedShipId)) setSelectedShipId(methods[0]?.id || ""); }} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
           {page === "reklamacje" && <ReklamacjePage currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "terms" && <StaticContentPage title="📄 Regulamin sklepu" settingKey="terms_content" isAdmin={isAdmin} showAlert={showAlert} />}
@@ -1101,23 +1126,37 @@ export default function App() {
         <div className="cart-footer">
           {cart.length > 0 && (
             <div className="shipping-info-box">
-              <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
-                <span>{shipment.type === "packages" ? "📦" : "🪵"} {shipment.label}</span>
-                <span className="text-muted">· {cartWeight.toFixed(1)} kg łącznie</span>
+              <div style={{ fontWeight: 700, fontSize: ".85rem", marginBottom: 8 }}>🚚 Sposób dostawy</div>
+              {shippingMethods.map(m => {
+                const thr = +m.freeThreshold || 0;
+                const isFree = thr > 0 && cartNetto >= thr;
+                return (
+                  <label key={m.id} className="ship-method" style={{ borderColor: selectedShipId === m.id ? "var(--primary)" : "var(--border)", background: selectedShipId === m.id ? "#f0fdf4" : "#fff" }}>
+                    <input type="radio" name="shipmethod" checked={selectedShipId === m.id} onChange={() => setSelectedShipId(m.id)} />
+                    <span style={{ flex: 1 }}>
+                      <strong>{m.name}</strong>
+                      {thr > 0 && <span className="text-sm text-muted"> · gratis od {fmt(thr)} netto</span>}
+                    </span>
+                    <span style={{ fontWeight: 700 }}>{isFree ? <span style={{ color: "var(--success)" }}>Gratis</span> : (+m.cost ? fmt(+m.cost) : "Gratis")}</span>
+                  </label>
+                );
+              })}
+              <div className="flex items-center gap-2" style={{ marginTop: 8 }}>
+                <span className="text-muted text-sm">Waga koszyka: {cartWeight.toFixed(1)} kg</span>
               </div>
-              {freeShipping
-                ? <div className="text-sm" style={{ color: "var(--success)", fontWeight: 600 }}>🚚 Darmowa dostawa!</div>
+              {methodFreeThreshold > 0 && (freeShipping
+                ? <div className="text-sm" style={{ color: "var(--success)", fontWeight: 600, marginTop: 4 }}>🚚 Masz darmową dostawę tą metodą!</div>
                 : <>
-                  <div className="text-sm text-muted">Brakuje {fmt(amountToFreeShipping)} do darmowej dostawy</div>
-                  <div className="shipping-progress"><div className="shipping-progress-bar" style={{ width: `${Math.min(100, (cartAfterDiscount / FREE_SHIPPING_THRESHOLD) * 100)}%` }}></div></div>
-                </>}
+                  <div className="text-sm text-muted" style={{ marginTop: 4 }}>Brakuje {fmt(amountToFreeShipping)} netto do darmowej dostawy ({selectedMethod?.name})</div>
+                  <div className="shipping-progress"><div className="shipping-progress-bar" style={{ width: `${Math.min(100, (cartNetto / methodFreeThreshold) * 100)}%` }}></div></div>
+                </>)}
             </div>
           )}
           {discount > 0 && <div className="discount-box">🎉 Rabat {discount}% — oszczędzasz {fmt(cartDisc)}</div>}
           <div className="cart-total-row"><span>Suma:</span><span>{fmt(cartSub)}</span></div>
           {discount > 0 && <div className="cart-total-row" style={{ color: "var(--success)" }}><span>Rabat ({discount}%):</span><span>−{fmt(cartDisc)}</span></div>}
           <div className="cart-total-row">
-            <span>Dostawa ({shipment.label}):</span>
+            <span>Dostawa ({selectedMethod?.name || "—"}):</span>
             <span>{freeShipping ? <span style={{ color: "var(--success)", fontWeight: 600 }}>Gratis</span> : fmt(shippingCost)}</span>
           </div>
           <div className="cart-total-row cart-total-final"><span>Do zapłaty:</span><span>{fmt(cartTotal)}</span></div>
@@ -1133,7 +1172,7 @@ export default function App() {
           subtotal={cartAfterDiscount}
           shippingCost={shippingCost}
           freeShipping={freeShipping}
-          shipmentLabel={shipment.label}
+          shipmentLabel={selectedMethod?.name || "Dostawa"}
           isGuest={isGuest}
           onClose={() => setPaymentOpen(false)}
           onComplete={placeOrder}
@@ -3442,7 +3481,7 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [] });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], priceNet: "" });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -3469,7 +3508,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     reader.readAsDataURL(file);
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [] }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], priceNet: "" }); setEditItem(null); setModal("product"); };
 
   const uploadDoc = async (file) => {
     if (!file) return;
@@ -3527,8 +3566,8 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
-    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
-    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], attributeGroups: groups, variants: vars });
+    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
+    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
   const save = async () => {
@@ -3843,8 +3882,9 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
               <div className="flex gap-3">
                 {!((form.attributeGroups || []).some(g => (g.name || "").trim() && (g.values || []).length)) ? (
                   <>
-                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena brutto *</label><input className="form-input" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} /></div>
-                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena promocyjna</label><input className="form-input" type="number" step="0.01" min="0" placeholder="puste = brak promocji" value={form.promoPrice} onChange={e => setForm(f => ({ ...f, promoPrice: e.target.value }))} /></div>
+                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena netto</label><input className="form-input" type="number" step="0.01" min="0" value={form.priceNet ?? ""} onChange={e => { const val = e.target.value; setForm(f => ({ ...f, priceNet: val, price: val === "" ? "" : String(grossOf(+val)) })); }} /></div>
+                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena brutto *</label><input className="form-input" type="number" step="0.01" min="0" value={form.price} onChange={e => { const val = e.target.value; setForm(f => ({ ...f, price: val, priceNet: val === "" ? "" : String(netOf(+val)) })); }} /></div>
+                    <div className="form-group" style={{ flex: 1 }}><label className="form-label">Cena promocyjna (brutto)</label><input className="form-input" type="number" step="0.01" min="0" placeholder="puste = brak promocji" value={form.promoPrice} onChange={e => setForm(f => ({ ...f, promoPrice: e.target.value }))} /></div>
                   </>
                 ) : (
                   <div className="form-group" style={{ flex: 2 }}><label className="form-label">Cena</label><div className="form-input" style={{ background: "#f8fafc", color: "var(--muted)", display: "flex", alignItems: "center" }}>Ustalana w wariantach (netto) — sekcja „🧩 Warianty" poniżej</div></div>
@@ -3898,7 +3938,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                   <div style={{ marginTop: 10 }}>
                     <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 6 }}>
                       <label className="form-label" style={{ marginBottom: 0, fontWeight: 600 }}>Warianty (kombinacje z ceną)</label>
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: `v_${Date.now()}`, combo: {}, price: "", sku: "", weight: "" }] }))}>+ Dodaj wariant</button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: `v_${Date.now()}`, combo: {}, price: "", priceGross: "", sku: "", weight: "", stock: "" }] }))}>+ Dodaj wariant</button>
                     </div>
                     {(form.variants || []).map((v, vi) => (
                       <div key={v.id || vi} className="flex gap-2 items-center" style={{ marginBottom: 8, flexWrap: "wrap" }}>
@@ -3910,7 +3950,9 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                           </select>
                         ))}
                         <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena netto" value={v.price}
-                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], price: e.target.value }; return { ...f, variants: vs }; })} />
+                          onChange={e => setForm(f => { const val = e.target.value; const vs = [...f.variants]; vs[vi] = { ...vs[vi], price: val, priceGross: val === "" ? "" : String(grossOf(+val)) }; return { ...f, variants: vs }; })} />
+                        <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena brutto" value={v.priceGross ?? ""}
+                          onChange={e => setForm(f => { const val = e.target.value; const vs = [...f.variants]; vs[vi] = { ...vs[vi], priceGross: val, price: val === "" ? "" : String(netOf(+val)) }; return { ...f, variants: vs }; })} />
                         <input className="form-input" style={{ flex: "1 1 70px" }} placeholder="SKU" value={v.sku}
                           onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], sku: e.target.value }; return { ...f, variants: vs }; })} />
                         <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="0.001" min="0" placeholder="Waga" value={v.weight}
@@ -4251,6 +4293,75 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
 
 // ── ADMIN: ZAPYTANIA OFERTOWE ───────────────────────────────────────────────
 const QUOTE_STATUSES = ["Nowe", "W trakcie", "Wycenione", "Zamknięte"];
+function ShippingAdminPage({ showAlert, onSaved }) {
+  const [methods, setMethods] = useState(DEFAULT_SHIPPING_METHODS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api.fetchSetting("shipping");
+        if (!cancelled && s && Array.isArray(s.methods) && s.methods.length) setMethods(s.methods);
+      } catch { /* domyślne */ } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const setField = (i, key, val) => setMethods(prev => prev.map((m, j) => j === i ? { ...m, [key]: val } : m));
+  const addMethod = () => setMethods(prev => [...prev, { id: `m_${Date.now()}`, name: "", cost: "", freeThreshold: "" }]);
+  const removeMethod = (i) => setMethods(prev => prev.filter((_, j) => j !== i));
+
+  const save = async () => {
+    const clean = methods
+      .map(m => ({ id: m.id || `m_${Math.random().toString(36).slice(2, 7)}`, name: (m.name || "").trim(), cost: +m.cost || 0, freeThreshold: +m.freeThreshold || 0 }))
+      .filter(m => m.name);
+    if (clean.length === 0) { showAlert("Dodaj przynajmniej jedną metodę z nazwą", "danger"); return; }
+    setSaving(true);
+    try {
+      await api.saveSetting("shipping", { methods: clean });
+      setMethods(clean);
+      onSaved && onSaved(clean);
+      showAlert("Zapisano metody dostawy");
+    } catch (err) {
+      showAlert("Nie udało się zapisać: " + err.message, "danger");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <div className="page-header"><h1 className="page-title">🚚 Dostawa</h1></div>
+      <div className="card">
+        <div className="info-box mb-3">Ustaw metody dostawy. <strong>Koszt</strong> to cena brutto doliczana do zamówienia. <strong>Próg darmowej dostawy</strong> liczony jest od kwoty <strong>netto</strong> koszyka (0 = brak darmowej dostawy dla tej metody).</div>
+        {loading ? <div className="empty-state"><div className="icon">⏳</div>Wczytywanie…</div> : (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Nazwa metody</th><th>Koszt (brutto, zł)</th><th>Darmowa od (netto, zł)</th><th></th></tr></thead>
+                <tbody>
+                  {methods.map((m, i) => (
+                    <tr key={m.id || i}>
+                      <td><input className="form-input" value={m.name} placeholder="np. Kurier DPD" onChange={e => setField(i, "name", e.target.value)} /></td>
+                      <td><input className="form-input" type="number" step="0.01" min="0" style={{ maxWidth: 130 }} value={m.cost} onChange={e => setField(i, "cost", e.target.value)} /></td>
+                      <td><input className="form-input" type="number" step="0.01" min="0" style={{ maxWidth: 150 }} placeholder="0 = brak" value={m.freeThreshold} onChange={e => setField(i, "freeThreshold", e.target.value)} /></td>
+                      <td><button className="btn btn-danger btn-sm" onClick={() => removeMethod(i)}>🗑️</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button className="btn btn-secondary" onClick={addMethod}>+ Dodaj metodę</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Zapisywanie…" : "💾 Zapisz"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 function QuoteAdminPage({ showAlert }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
