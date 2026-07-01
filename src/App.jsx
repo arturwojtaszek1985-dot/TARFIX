@@ -638,7 +638,7 @@ const css = `
 // ── GŁÓWNA APLIKACJA ──────────────────────────────────────────────────────────
 export default function App() {
   const [users, setUsers] = useState(INITIAL_USERS);
-  const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState([]);
   const [omnibusFloors, setOmnibusFloors] = useState({});
   const [productRatings, setProductRatings] = useState({});
   const [units, setUnits] = useState(DEFAULT_UNITS);
@@ -716,6 +716,7 @@ export default function App() {
       } catch (err) {
         console.error("Nie udało się połączyć z bazą danych:", err);
         setDbError(err.message || "Błąd połączenia z bazą danych");
+        setDbReady(true); // zakończ ładowanie — pokaż pusty stan/komunikat zamiast wiecznego spinnera
         // Zostajemy na danych startowych z kodu — sklep nadal działa
       }
       // Dane kontaktowe wczytujemy osobno — jeśli tabela "settings" jeszcze
@@ -1096,7 +1097,7 @@ export default function App() {
             </div>
           )}
 
-          {page === "shop" && <ShopPage products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={publishedProducts} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} facets={facets} paramFilters={paramFilters} setParamFilters={setParamFilters} />}
+          {page === "shop" && <ShopPage loading={!dbReady} products={filtered} categories={cats} categoriesFull={categories} filterCat={filterCat} setFilterCat={setFilterCat} filterSubcat={filterSubcat} setFilterSubcat={setFilterSubcat} searchQ={searchQ} setSearchQ={setSearchQ} onAdd={addToCart} discount={discount} units={units} onOpenDetail={openProductDetail} allProducts={publishedProducts} bannerInfo={bannerInfo} setBannerInfo={setBannerInfo} isAdmin={isAdmin} showAlert={showAlert} omnibusFloors={omnibusFloors} productRatings={productRatings} facets={facets} paramFilters={paramFilters} setParamFilters={setParamFilters} />}
           {page === "product-detail" && <ProductDetailPage product={products.find(p => p.id === selectedProductId)} units={units} discount={discount} onAdd={addToCart} onBack={() => setPage("shop")} omnibusFloors={omnibusFloors} productRatings={productRatings} currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "contact" && <ContactPage contactInfo={contactInfo} setContactInfo={setContactInfo} isAdmin={isAdmin} showAlert={showAlert} />}
           {page === "csv" && isAdmin && <CsvImportPage products={products} setProducts={setProducts} units={units} setUnits={setUnits} showAlert={showAlert} setLastSync={setLastSync} />}
@@ -2069,7 +2070,7 @@ function Stars({ value = 0, count }) {
   );
 }
 
-function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors, productRatings, facets, paramFilters, setParamFilters }) {
+function ShopPage({ loading, products, categories, categoriesFull, filterCat, setFilterCat, filterSubcat, setFilterSubcat, searchQ, setSearchQ, onAdd, discount, units, onOpenDetail, allProducts, bannerInfo, setBannerInfo, isAdmin, showAlert, omnibusFloors, productRatings, facets, paramFilters, setParamFilters }) {
   const [bannerEditing, setBannerEditing] = useState(false);
   const [bannerForm, setBannerForm] = useState(bannerInfo);
   const bannerFileRef = useRef(null);
@@ -2256,7 +2257,9 @@ function ShopPage({ products, categories, categoriesFull, filterCat, setFilterCa
             </div>
           )}
 
-          {products.length === 0
+          {loading
+            ? <div className="empty-state"><div className="icon">⏳</div>Wczytywanie produktów…</div>
+            : products.length === 0
             ? <div className="empty-state"><div className="icon">📦</div>Brak produktów</div>
             : <div className="products-grid">
               {products.map(p => {
