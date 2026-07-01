@@ -4415,6 +4415,7 @@ function StatsPage({ currentUser, showAlert }) {
   const [dateTo, setDateTo] = useState("");
   const [granularity, setGranularity] = useState("month");
   const [catFilter, setCatFilter] = useState("all");
+  const [prodFilter, setProdFilter] = useState("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -4453,6 +4454,16 @@ function StatsPage({ currentUser, showAlert }) {
 
   // ── ANALIZA: zakres dat + granulacja (rok/miesiąc/dzień) + kategoria ─────────
   const allCats = [...new Set(valid.flatMap(o => (o.items || []).map(it => it.category).filter(Boolean)))].sort((a, b) => a.localeCompare(b, "pl"));
+  const baseName = (it) => it.optionName && it.name ? it.name.replace(` — ${it.optionName}`, "") : (it.name || "—");
+  const prodKey = (it) => it.productId != null ? String(it.productId) : (baseName(it) || "—");
+  // Lista produktów do wyboru (zawężona do wybranej kategorii).
+  const prodMapAll = new Map();
+  valid.forEach(o => (o.items || []).forEach(it => {
+    if (catFilter !== "all" && it.category !== catFilter) return;
+    const k = prodKey(it);
+    if (!prodMapAll.has(k)) prodMapAll.set(k, baseName(it));
+  }));
+  const availableProducts = [...prodMapAll.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "pl"));
   const inRange = (o) => {
     if (!o.created_at) return false;
     const d = new Date(o.created_at);
@@ -4470,7 +4481,7 @@ function StatsPage({ currentUser, showAlert }) {
   const analysisOrders = valid.filter(inRange);
   const agg = {};
   analysisOrders.forEach(o => {
-    const items = (o.items || []).filter(it => catFilter === "all" || it.category === catFilter);
+    const items = (o.items || []).filter(it => (catFilter === "all" || it.category === catFilter) && (prodFilter === "all" || prodKey(it) === prodFilter));
     if (items.length === 0) return;
     const key = periodKey(o.created_at);
     if (!agg[key]) agg[key] = { period: key, orderIds: new Set(), qty: 0, gross: 0 };
@@ -4486,12 +4497,13 @@ function StatsPage({ currentUser, showAlert }) {
     if (analysisRows.length === 0) { showAlert("Brak danych do eksportu dla wybranych filtrów", "danger"); return; }
     const money = (n) => (Math.round((+n || 0) * 100) / 100).toFixed(2).replace(".", ",");
     const granLabel = granularity === "year" ? "Rok" : granularity === "day" ? "Dzień" : "Miesiąc";
+    const prodName = prodFilter === "all" ? "Wszystkie" : (availableProducts.find(p => p.id === prodFilter)?.name || prodFilter);
     const rows = analysisRows.map(r => ({
-      [granLabel]: r.period, Kategoria: catFilter === "all" ? "Wszystkie" : catFilter,
+      [granLabel]: r.period, Kategoria: catFilter === "all" ? "Wszystkie" : catFilter, Produkt: prodName,
       "Liczba zamówień": r.orders, "Sprzedane sztuki": r.qty,
       "Przychód netto": money(r.net), "Przychód brutto": money(r.gross),
     }));
-    rows.push({ [granLabel]: "RAZEM", Kategoria: catFilter === "all" ? "Wszystkie" : catFilter, "Liczba zamówień": analysisTotals.orders, "Sprzedane sztuki": analysisTotals.qty, "Przychód netto": money(analysisTotals.net), "Przychód brutto": money(analysisTotals.gross) });
+    rows.push({ [granLabel]: "RAZEM", Kategoria: catFilter === "all" ? "Wszystkie" : catFilter, Produkt: prodName, "Liczba zamówień": analysisTotals.orders, "Sprzedane sztuki": analysisTotals.qty, "Przychód netto": money(analysisTotals.net), "Przychód brutto": money(analysisTotals.gross) });
     const csv = Papa.unparse(rows, { delimiter: ";" });
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -4527,12 +4539,18 @@ function StatsPage({ currentUser, showAlert }) {
             </select>
           </div>
           <div className="form-group" style={{ marginBottom: 0, minWidth: 180 }}><label className="form-label">Kategoria</label>
-            <select className="form-select" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+            <select className="form-select" value={catFilter} onChange={e => { setCatFilter(e.target.value); setProdFilter("all"); }}>
               <option value="all">Wszystkie kategorie</option>
               {allCats.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
-          {(dateFrom || dateTo || catFilter !== "all") && <div className="form-group" style={{ marginBottom: 0, alignSelf: "flex-end" }}><button className="btn btn-secondary" onClick={() => { setDateFrom(""); setDateTo(""); setCatFilter("all"); }}>✕ Wyczyść</button></div>}
+          <div className="form-group" style={{ marginBottom: 0, minWidth: 200 }}><label className="form-label">Produkt</label>
+            <select className="form-select" value={prodFilter} onChange={e => setProdFilter(e.target.value)}>
+              <option value="all">Wszystkie produkty</option>
+              {availableProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          {(dateFrom || dateTo || catFilter !== "all" || prodFilter !== "all") && <div className="form-group" style={{ marginBottom: 0, alignSelf: "flex-end" }}><button className="btn btn-secondary" onClick={() => { setDateFrom(""); setDateTo(""); setCatFilter("all"); setProdFilter("all"); }}>✕ Wyczyść</button></div>}
         </div>
         {analysisRows.length === 0 ? <div className="empty-state"><div className="icon">📊</div>Brak danych sprzedaży dla wybranych filtrów.</div>
           : <div className="table-wrap"><table>
