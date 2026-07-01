@@ -2491,10 +2491,10 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
 
               <div className="pdp-price" style={{ marginTop: 8 }}>
                 {!allSelected
-                  ? <><span className="text-sm text-muted">od </span>{fmt(minVariantPrice(product))} <span className="text-sm text-muted">netto · {fmt(grossOf(minVariantPrice(product)))} brutto</span><div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
+                  ? <><span className="text-sm text-muted">od </span>{fmt(minVariantPrice(product))} <span className="text-sm text-muted">netto / {unitLabel} · {fmt(grossOf(minVariantPrice(product)))} brutto</span><div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>Wybierz wszystkie opcje, aby zobaczyć cenę</div></>
                   : matched
                     ? <>
-                        <span className="product-price">{fmt(matched.price)}</span> <span className="text-sm text-muted">netto</span>
+                        <span className="product-price">{fmt(matched.price)}</span> <span className="text-sm text-muted">netto / {unitLabel}</span>
                         <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(grossOf(matched.price))} brutto (z VAT 23%)</div>
                         {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}% — cena netto: {fmt(matched.price * (1 - discount / 100))}</div>}
                         {matched.weight ? <div className="text-sm text-muted" style={{ fontSize: ".85rem" }}>waga: {matched.weight} kg</div> : null}
@@ -2515,16 +2515,16 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                   <>
                     <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(netOf(product.price))}</span>{" "}
                     {fmt(netOf(discount > 0 ? discountedPrice : base))}
-                    <span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto</span>
+                    <span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto / {unitLabel}</span>
                     <span className="promo-badge">Promocja</span>
                   </>
                 ) : (discount > 0 ? (
                   <>
                     <span className="product-price-original" style={{ fontSize: "1.1rem" }}>{fmt(netOf(base))}</span>{" "}
                     {fmt(netOf(discountedPrice))}
-                    <span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto</span>
+                    <span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto / {unitLabel}</span>
                   </>
-                ) : <>{fmt(netOf(base))}<span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto</span></>)}
+                ) : <>{fmt(netOf(base))}<span className="text-sm text-muted" style={{ fontSize: "1rem" }}> netto / {unitLabel}</span></>)}
               </div>
               <div className="text-sm text-muted" style={{ fontSize: ".9rem" }}>{fmt(discount > 0 ? discountedPrice : base)} brutto (z VAT 23%)</div>
               {discount > 0 && <div className="product-price-discount" style={{ fontSize: ".9rem" }}>🎉 Twój rabat {discount}%{!promo ? ` — oszczędzasz ${fmt(base - discountedPrice)}` : ""}</div>}
