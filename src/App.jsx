@@ -891,6 +891,10 @@ export default function App() {
           deliveryPhone: o.delivery_phone,
           deliveryAddress: o.delivery_address,
           deliveryNip: o.delivery_nip,
+          shipToDifferent: o.ship_to_different,
+          shipToName: o.ship_to_name,
+          shipToAddress: o.ship_to_address,
+          shipToPhone: o.ship_to_phone,
           paymentTermDays: o.payment_term_days || 0,
         }));
         setOrders(mapped);
@@ -951,6 +955,10 @@ export default function App() {
       deliveryCompany: delivery.company || null, deliveryName: delivery.name || null,
       deliveryPhone: delivery.phone || null, deliveryAddress: delivery.address || null,
       deliveryNip: delivery.nip || null,
+      shipToDifferent: !!delivery.shipDifferent,
+      shipToName: delivery.shipTo?.name || null,
+      shipToAddress: delivery.shipTo?.address || null,
+      shipToPhone: delivery.shipTo?.phone || null,
       paymentTermDays: isGuest ? 0 : (currentUser.paymentTermDays || 0),
     };
 
@@ -977,6 +985,10 @@ export default function App() {
         delivery_phone: newOrder.deliveryPhone,
         delivery_address: newOrder.deliveryAddress,
         delivery_nip: newOrder.deliveryNip,
+        ship_to_different: newOrder.shipToDifferent,
+        ship_to_name: newOrder.shipToName,
+        ship_to_address: newOrder.shipToAddress,
+        ship_to_phone: newOrder.shipToPhone,
         payment_term_days: newOrder.paymentTermDays,
       });
     } catch (err) {
@@ -1176,6 +1188,7 @@ export default function App() {
           freeShipping={freeShipping}
           shipmentLabel={selectedMethod?.name || "Dostawa"}
           isGuest={isGuest}
+          currentUser={currentUser}
           onClose={() => setPaymentOpen(false)}
           onComplete={placeOrder}
         />
@@ -1799,14 +1812,22 @@ function RichTextEditor({ value, onChange, placeholder }) {
 }
 
 
-function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLabel, isGuest, onClose, onComplete }) {
+function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLabel, isGuest, currentUser, onClose, onComplete }) {
   const [method, setMethod] = useState("card");
   const [stage, setStage] = useState("select"); // select | form | processing | success
   const [card, setCard] = useState({ number: "", expiry: "", cvc: "", name: "" });
   const [blik, setBlik] = useState(["", "", "", "", "", ""]);
   const [guestEmail, setGuestEmail] = useState("");
   const [guestEmailErr, setGuestEmailErr] = useState("");
-  const [delivery, setDelivery] = useState({ company: "", name: "", phone: "", address: "", nip: "" });
+  const [delivery, setDelivery] = useState({
+    company: (!isGuest && currentUser?.companyName) || "",
+    name: (!isGuest && currentUser?.contactName) || "",
+    phone: (!isGuest && currentUser?.phone) || "",
+    address: (!isGuest && currentUser?.companyAddress) || "",
+    nip: (!isGuest && currentUser?.nip) || "",
+  });
+  const [shipDifferent, setShipDifferent] = useState(false);
+  const [shipTo, setShipTo] = useState({ name: "", address: "", phone: "" });
   const [deliveryErr, setDeliveryErr] = useState("");
   const blikRefs = useRef([]);
 
@@ -1827,7 +1848,7 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
   };
 
   const guestEmailValid = !isGuest || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail);
-  const deliveryValid = delivery.name.trim() && delivery.phone.trim() && delivery.address.trim();
+  const deliveryValid = delivery.name.trim() && delivery.phone.trim() && delivery.address.trim() && (!shipDifferent || (shipTo.name.trim() && shipTo.address.trim()));
 
   const canSubmit = () => {
     if (!guestEmailValid) return false;
@@ -1842,7 +1863,7 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
   const submit = () => {
     if (isGuest && !guestEmailValid) { setGuestEmailErr("Podaj poprawny adres e-mail."); return; }
     if (!deliveryValid) { setDeliveryErr("Uzupełnij dane do dostawy: osoba kontaktowa, telefon i adres."); return; }
-    const info = { email: isGuest ? guestEmail : null, delivery };
+    const info = { email: isGuest ? guestEmail : null, delivery: { ...delivery, shipDifferent, shipTo: shipDifferent ? shipTo : null } };
     if (method === "cod") return onComplete("Za pobraniem", "Do zapłaty przy odbiorze", info);
     setStage("processing");
     setTimeout(() => {
@@ -1897,7 +1918,7 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
               )}
 
               <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, marginTop: 4, marginBottom: 6 }}>
-                <p className="form-label" style={{ fontWeight: 600, marginBottom: 10 }}>🚚 Dane do dostawy</p>
+                <p className="form-label" style={{ fontWeight: 600, marginBottom: 10 }}>🏢 Dane do zamówienia (firma / faktura)</p>
                 <div className="form-group">
                   <label className="form-label">Nazwa firmy</label>
                   <input className="form-input" placeholder="opcjonalnie" value={delivery.company}
@@ -1923,6 +1944,29 @@ function PaymentModal({ total, subtotal, shippingCost, freeShipping, shipmentLab
                   <input className="form-input" placeholder="opcjonalnie" value={delivery.nip}
                     onChange={e => setDelivery(d => ({ ...d, nip: e.target.value }))} />
                 </div>
+                <label className="flex items-center gap-2" style={{ cursor: "pointer", margin: "2px 0 6px", fontWeight: 600 }}>
+                  <input type="checkbox" checked={shipDifferent} onChange={e => setShipDifferent(e.target.checked)} style={{ width: 16, height: 16 }} />
+                  📦 Wyślij na inny adres niż dane firmy
+                </label>
+                {shipDifferent && (
+                  <div style={{ borderLeft: "3px solid var(--primary)", paddingLeft: 12, marginBottom: 6 }}>
+                    <div className="form-group">
+                      <label className="form-label">Odbiorca *</label>
+                      <input className="form-input" placeholder="Imię i nazwisko lub nazwa firmy" value={shipTo.name}
+                        onChange={e => { setShipTo(s => ({ ...s, name: e.target.value })); setDeliveryErr(""); }} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Adres wysyłki *</label>
+                      <input className="form-input" placeholder="ulica, nr, kod pocztowy, miejscowość" value={shipTo.address}
+                        onChange={e => { setShipTo(s => ({ ...s, address: e.target.value })); setDeliveryErr(""); }} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Telefon do wysyłki</label>
+                      <input className="form-input" type="tel" placeholder="opcjonalnie" value={shipTo.phone}
+                        onChange={e => setShipTo(s => ({ ...s, phone: e.target.value }))} />
+                    </div>
+                  </div>
+                )}
                 {deliveryErr && <p className="text-sm" style={{ color: "var(--danger)", marginTop: 2 }}>{deliveryErr}</p>}
               </div>
 
@@ -3997,7 +4041,14 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
 
               <div style={{ marginTop: 16, padding: "12px 14px", background: form.published ? "#ecfdf5" : "#fff7ed", border: `1px solid ${form.published ? "#a7f3d0" : "#fed7aa"}`, borderRadius: 8 }}>
                 <label className="flex items-center gap-3" style={{ cursor: "pointer", margin: 0 }}>
-                  <input type="checkbox" checked={!!form.published} onChange={e => setForm(f => ({ ...f, published: e.target.checked }))} style={{ width: 18, height: 18 }} />
+                  <input type="checkbox" checked={!!form.published} onChange={e => {
+                    if (e.target.checked) {
+                      if (window.confirm("Opublikować produkt? Będzie widoczny dla wszystkich klientów w sklepie.")) setForm(f => ({ ...f, published: true }));
+                      // anulowano — zostaje szkicem
+                    } else {
+                      setForm(f => ({ ...f, published: false }));
+                    }
+                  }} style={{ width: 18, height: 18 }} />
                   <span>
                     <strong>{form.published ? "✅ Opublikowany — widoczny w sklepie" : "📝 Szkic (bufor) — niewidoczny dla klientów"}</strong>
                     <div className="text-sm text-muted">{form.published ? "Produkt jest dostępny dla klientów." : "Zaznacz, aby udostępnić produkt w sklepie. Możesz też opublikować go później z listy produktów."}</div>
@@ -4642,10 +4693,10 @@ function generateOrderPDF(order, contactInfo, units) {
   if (order.guestEmail) { y += 5; doc.text(pdfText(order.guestEmail), marginX, y); }
   y += 9;
 
-  // Dane do dostawy (jeśli podane przy zamówieniu)
+  // Dane firmy / faktura (jeśli podane przy zamówieniu)
   if (order.deliveryName || order.deliveryAddress || order.deliveryCompany) {
     doc.setFont("helvetica", "bold");
-    doc.text(pdfText("Dostawa do:"), marginX, y);
+    doc.text(pdfText(order.shipToDifferent ? "Nabywca / faktura:" : "Dostawa do:"), marginX, y);
     doc.setFont("helvetica", "normal");
     y += 5;
     if (order.deliveryCompany) { doc.text(pdfText(order.deliveryCompany), marginX, y); y += 5; }
@@ -4653,6 +4704,18 @@ function generateOrderPDF(order, contactInfo, units) {
     if (order.deliveryAddress) { doc.text(pdfText(order.deliveryAddress), marginX, y); y += 5; }
     if (order.deliveryPhone) { doc.text(pdfText(`Tel: ${order.deliveryPhone}`), marginX, y); y += 5; }
     if (order.deliveryNip) { doc.text(pdfText(`NIP: ${order.deliveryNip}`), marginX, y); y += 5; }
+    y += 4;
+  }
+
+  // Adres wysyłki (gdy inny niż dane firmy)
+  if (order.shipToDifferent && (order.shipToName || order.shipToAddress)) {
+    doc.setFont("helvetica", "bold");
+    doc.text(pdfText("Adres wysylki:"), marginX, y);
+    doc.setFont("helvetica", "normal");
+    y += 5;
+    if (order.shipToName) { doc.text(pdfText(order.shipToName), marginX, y); y += 5; }
+    if (order.shipToAddress) { doc.text(pdfText(order.shipToAddress), marginX, y); y += 5; }
+    if (order.shipToPhone) { doc.text(pdfText(`Tel: ${order.shipToPhone}`), marginX, y); y += 5; }
     y += 4;
   }
 
@@ -4813,11 +4876,16 @@ function OrdersPage({ orders, setOrders, isAdmin, units, contactInfo, showAlert 
             </div>
             {(o.deliveryName || o.deliveryAddress || o.deliveryCompany) && (
               <div style={{ marginTop: 10, padding: "10px 12px", background: "#f8fafc", borderRadius: 8, fontSize: ".85rem", lineHeight: 1.6 }}>
-                <strong>🚚 Dostawa:</strong>{" "}
+                <strong>{o.shipToDifferent ? "🏢 Nabywca / faktura:" : "🚚 Dostawa:"}</strong>{" "}
                 {o.deliveryCompany ? `${o.deliveryCompany}, ` : ""}{o.deliveryName}
                 {o.deliveryAddress ? ` — ${o.deliveryAddress}` : ""}
                 {o.deliveryPhone ? ` · tel. ${o.deliveryPhone}` : ""}
                 {o.deliveryNip ? ` · NIP ${o.deliveryNip}` : ""}
+                {o.shipToDifferent && (o.shipToName || o.shipToAddress) && (
+                  <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px dashed var(--border)" }}>
+                    <strong>📦 Adres wysyłki:</strong> {o.shipToName}{o.shipToAddress ? ` — ${o.shipToAddress}` : ""}{o.shipToPhone ? ` · tel. ${o.shipToPhone}` : ""}
+                  </div>
+                )}
               </div>
             )}
             <div style={{ marginTop: 10, textAlign: "right", borderTop: "1px solid var(--border)", paddingTop: 8 }}>

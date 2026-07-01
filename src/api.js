@@ -96,6 +96,11 @@ export async function buildAppUser(authUser) {
     role: profile?.role || "customer",
     discount: profile?.discount || 0,
     paymentTermDays: profile?.payment_term_days || 0,
+    companyName: profile?.company_name || "",
+    nip: profile?.nip || "",
+    companyAddress: profile?.company_address || "",
+    phone: profile?.phone || "",
+    contactName: profile?.contact_name || "",
   };
 }
 
