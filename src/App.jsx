@@ -3569,6 +3569,8 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
+    const gorder = (groups || []).map(g => g.name);
+    vars.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; });
     setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
@@ -3595,6 +3597,8 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
         cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0, stock: +v.stock || 0 });
       }
     }
+    // Zapisujemy warianty w kolejności posortowanej (naturalnie wg wartości) — spójnie ze sklepem.
+    { const gorder = cleanGroups.map(g => g.name); cleanVariants.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; }); }
 
     const usingVariants = cleanGroups.length > 0;
     let basePrice, promoVal;
@@ -3945,8 +3949,8 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                     {(() => {
                       const grps = (form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length);
                       const uv = (id, patch) => setForm(f => ({ ...f, variants: f.variants.map(x => x.id === id ? { ...x, ...patch } : x) }));
-                      const sorted = [...(form.variants || [])].sort((a, b) => { for (const g of grps) { const c = naturalCompare(a.combo?.[g.name] || "", b.combo?.[g.name] || ""); if (c !== 0) return c; } return 0; });
-                      return sorted.map(v => (
+                      const rowsToRender = form.variants || []; // kolejność dodawania — bez sortowania na żywo (nie przeskakuje podczas edycji)
+                      return rowsToRender.map(v => (
                         <div key={v.id} className="flex gap-2 items-center" style={{ marginBottom: 8, flexWrap: "wrap" }}>
                           {grps.map(g => (
                             <select key={g.id || g.name} className="form-select" style={{ flex: "1 1 110px", padding: "6px 8px" }} value={v.combo?.[g.name] || ""}
