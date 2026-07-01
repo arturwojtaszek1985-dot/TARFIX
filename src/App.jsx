@@ -3764,7 +3764,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
             <thead><tr>
               <th style={{ width: 36 }}><input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Zaznacz wszystkie" style={{ width: 16, height: 16 }} /></th>
               <th>SKU</th><th>Produkt</th><th>Kategoria</th><th>Podkategoria</th><th>Cena</th><th>Waga</th><th>Magazyn</th><th>Akcje</th></tr></thead>
-            <tbody>{products.map(p => (
+            <tbody>{[...products].sort((a, b) => naturalCompare(a.name || "", b.name || "")).map(p => (
               <tr key={p.id} style={selectedIds.includes(p.id) ? { background: "#fef2f2" } : undefined}>
                 <td><input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ width: 16, height: 16 }} /></td>
                 <td style={{ fontFamily: "monospace", fontSize: ".78rem", color: "var(--muted)" }}>{p.sku || "—"}</td>
@@ -3920,10 +3920,10 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                       <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, attributeGroups: f.attributeGroups.filter((_, j) => j !== gi) }))}>🗑️ grupa</button>
                     </div>
                     <div className="flex gap-2 items-center" style={{ flexWrap: "wrap", marginBottom: 6 }}>
-                      {(g.values || []).map((val, vi) => (
-                        <span key={vi} className="badge badge-blue" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      {[...(g.values || [])].sort(naturalCompare).map(val => (
+                        <span key={val} className="badge badge-blue" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                           {val}
-                          <span style={{ cursor: "pointer", fontWeight: 700 }} onClick={() => setForm(f => { const ag = [...f.attributeGroups]; ag[gi] = { ...ag[gi], values: ag[gi].values.filter((_, j) => j !== vi) }; return { ...f, attributeGroups: ag }; })}>×</span>
+                          <span style={{ cursor: "pointer", fontWeight: 700 }} onClick={() => setForm(f => { const ag = [...f.attributeGroups]; ag[gi] = { ...ag[gi], values: ag[gi].values.filter(x => x !== val) }; return { ...f, attributeGroups: ag }; })}>×</span>
                         </span>
                       ))}
                       {(g.values || []).length === 0 && <span className="text-sm text-muted">Brak wartości — dodaj poniżej</span>}
@@ -3940,28 +3940,33 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                       <label className="form-label" style={{ marginBottom: 0, fontWeight: 600 }}>Warianty (kombinacje z ceną)</label>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: `v_${Date.now()}`, combo: {}, price: "", priceGross: "", sku: "", weight: "", stock: "" }] }))}>+ Dodaj wariant</button>
                     </div>
-                    {(form.variants || []).map((v, vi) => (
-                      <div key={v.id || vi} className="flex gap-2 items-center" style={{ marginBottom: 8, flexWrap: "wrap" }}>
-                        {(form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length).map(g => (
-                          <select key={g.id || g.name} className="form-select" style={{ flex: "1 1 110px", padding: "6px 8px" }} value={v.combo?.[g.name] || ""}
-                            onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], combo: { ...vs[vi].combo, [g.name]: e.target.value } }; return { ...f, variants: vs }; })}>
-                            <option value="">{g.name}…</option>
-                            {g.values.map(val => <option key={val} value={val}>{val}</option>)}
-                          </select>
-                        ))}
-                        <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena netto" value={v.price}
-                          onChange={e => setForm(f => { const val = e.target.value; const vs = [...f.variants]; vs[vi] = { ...vs[vi], price: val, priceGross: val === "" ? "" : String(grossOf(+val)) }; return { ...f, variants: vs }; })} />
-                        <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena brutto" value={v.priceGross ?? ""}
-                          onChange={e => setForm(f => { const val = e.target.value; const vs = [...f.variants]; vs[vi] = { ...vs[vi], priceGross: val, price: val === "" ? "" : String(netOf(+val)) }; return { ...f, variants: vs }; })} />
-                        <input className="form-input" style={{ flex: "1 1 70px" }} placeholder="SKU" value={v.sku}
-                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], sku: e.target.value }; return { ...f, variants: vs }; })} />
-                        <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="0.001" min="0" placeholder="Waga" value={v.weight}
-                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], weight: e.target.value }; return { ...f, variants: vs }; })} />
-                        <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="1" min="0" placeholder="Stan" value={v.stock}
-                          onChange={e => setForm(f => { const vs = [...f.variants]; vs[vi] = { ...vs[vi], stock: e.target.value }; return { ...f, variants: vs }; })} />
-                        <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter((_, j) => j !== vi) }))}>🗑️</button>
-                      </div>
-                    ))}
+                    {(() => {
+                      const grps = (form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length);
+                      const uv = (id, patch) => setForm(f => ({ ...f, variants: f.variants.map(x => x.id === id ? { ...x, ...patch } : x) }));
+                      const sorted = [...(form.variants || [])].sort((a, b) => { for (const g of grps) { const c = naturalCompare(a.combo?.[g.name] || "", b.combo?.[g.name] || ""); if (c !== 0) return c; } return 0; });
+                      return sorted.map(v => (
+                        <div key={v.id} className="flex gap-2 items-center" style={{ marginBottom: 8, flexWrap: "wrap" }}>
+                          {grps.map(g => (
+                            <select key={g.id || g.name} className="form-select" style={{ flex: "1 1 110px", padding: "6px 8px" }} value={v.combo?.[g.name] || ""}
+                              onChange={e => uv(v.id, { combo: { ...v.combo, [g.name]: e.target.value } })}>
+                              <option value="">{g.name}…</option>
+                              {[...g.values].sort(naturalCompare).map(val => <option key={val} value={val}>{val}</option>)}
+                            </select>
+                          ))}
+                          <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena netto" value={v.price}
+                            onChange={e => { const val = e.target.value; uv(v.id, { price: val, priceGross: val === "" ? "" : String(grossOf(+val)) }); }} />
+                          <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena brutto" value={v.priceGross ?? ""}
+                            onChange={e => { const val = e.target.value; uv(v.id, { priceGross: val, price: val === "" ? "" : String(netOf(+val)) }); }} />
+                          <input className="form-input" style={{ flex: "1 1 70px" }} placeholder="SKU" value={v.sku}
+                            onChange={e => uv(v.id, { sku: e.target.value })} />
+                          <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="0.001" min="0" placeholder="Waga" value={v.weight}
+                            onChange={e => uv(v.id, { weight: e.target.value })} />
+                          <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="1" min="0" placeholder="Stan" value={v.stock}
+                            onChange={e => uv(v.id, { stock: e.target.value })} />
+                          <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter(x => x.id !== v.id) }))}>🗑️</button>
+                        </div>
+                      ));
+                    })()}
                   </div>
                 )}
               </div>
