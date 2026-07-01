@@ -4411,6 +4411,10 @@ function QuoteAdminPage({ showAlert }) {
 function StatsPage({ currentUser, showAlert }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [granularity, setGranularity] = useState("month");
+  const [catFilter, setCatFilter] = useState("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -4447,6 +4451,58 @@ function StatsPage({ currentUser, showAlert }) {
   const last30 = valid.filter(o => o.created_at && (now - new Date(o.created_at).getTime()) <= 30 * 86400000);
   const revenue30 = last30.reduce((s, o) => s + (Number(o.total) || 0), 0);
 
+  // ── ANALIZA: zakres dat + granulacja (rok/miesiąc/dzień) + kategoria ─────────
+  const allCats = [...new Set(valid.flatMap(o => (o.items || []).map(it => it.category).filter(Boolean)))].sort((a, b) => a.localeCompare(b, "pl"));
+  const inRange = (o) => {
+    if (!o.created_at) return false;
+    const d = new Date(o.created_at);
+    if (dateFrom && d < new Date(dateFrom + "T00:00:00")) return false;
+    if (dateTo && d > new Date(dateTo + "T23:59:59")) return false;
+    return true;
+  };
+  const periodKey = (d) => {
+    const dt = new Date(d);
+    const y = dt.getFullYear(), m = String(dt.getMonth() + 1).padStart(2, "0"), day = String(dt.getDate()).padStart(2, "0");
+    if (granularity === "year") return `${y}`;
+    if (granularity === "day") return `${y}-${m}-${day}`;
+    return `${y}-${m}`;
+  };
+  const analysisOrders = valid.filter(inRange);
+  const agg = {};
+  analysisOrders.forEach(o => {
+    const items = (o.items || []).filter(it => catFilter === "all" || it.category === catFilter);
+    if (items.length === 0) return;
+    const key = periodKey(o.created_at);
+    if (!agg[key]) agg[key] = { period: key, orderIds: new Set(), qty: 0, gross: 0 };
+    agg[key].orderIds.add(o.id || o.created_at);
+    items.forEach(it => { const q = Number(it.qty) || 0; agg[key].qty += q; agg[key].gross += (Number(it.price) || 0) * q; });
+  });
+  const analysisRows = Object.values(agg)
+    .map(a => ({ period: a.period, orders: a.orderIds.size, qty: a.qty, gross: a.gross, net: netOf(a.gross) }))
+    .sort((a, b) => a.period.localeCompare(b.period));
+  const analysisTotals = analysisRows.reduce((t, r) => ({ orders: t.orders + r.orders, qty: t.qty + r.qty, gross: t.gross + r.gross, net: t.net + r.net }), { orders: 0, qty: 0, gross: 0, net: 0 });
+
+  const exportAnalysis = () => {
+    if (analysisRows.length === 0) { showAlert("Brak danych do eksportu dla wybranych filtrów", "danger"); return; }
+    const money = (n) => (Math.round((+n || 0) * 100) / 100).toFixed(2).replace(".", ",");
+    const granLabel = granularity === "year" ? "Rok" : granularity === "day" ? "Dzień" : "Miesiąc";
+    const rows = analysisRows.map(r => ({
+      [granLabel]: r.period, Kategoria: catFilter === "all" ? "Wszystkie" : catFilter,
+      "Liczba zamówień": r.orders, "Sprzedane sztuki": r.qty,
+      "Przychód netto": money(r.net), "Przychód brutto": money(r.gross),
+    }));
+    rows.push({ [granLabel]: "RAZEM", Kategoria: catFilter === "all" ? "Wszystkie" : catFilter, "Liczba zamówień": analysisTotals.orders, "Sprzedane sztuki": analysisTotals.qty, "Przychód netto": money(analysisTotals.net), "Przychód brutto": money(analysisTotals.gross) });
+    const csv = Papa.unparse(rows, { delimiter: ";" });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `analiza_sprzedazy_${granularity}_${catFilter === "all" ? "wszystkie" : catFilter.replace(/[^\w]+/g, "-")}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showAlert(`Wyeksportowano analizę (${analysisRows.length} okresów)`);
+  };
+
   return (
     <>
       <div className="page-header"><h1 className="page-title">📈 Statystyki sprzedaży</h1></div>
@@ -4455,6 +4511,39 @@ function StatsPage({ currentUser, showAlert }) {
         <div className="stat-card"><div className="stat-value">{count}</div><div className="stat-label">Liczba zamówień</div></div>
         <div className="stat-card"><div className="stat-value">{fmt(avg)}</div><div className="stat-label">Średnia wartość zamówienia</div></div>
         <div className="stat-card"><div className="stat-value">{fmt(revenue30)}</div><div className="stat-label">Przychód (30 dni)</div></div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="flex items-center" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <h3 style={{ margin: 0 }}>📊 Analiza sprzedaży</h3>
+          <button className="btn btn-secondary" onClick={exportAnalysis}>📥 Eksport do Excela</button>
+        </div>
+        <div className="flex gap-3" style={{ flexWrap: "wrap", margin: "14px 0" }}>
+          <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Od (data)</label><input className="form-input" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></div>
+          <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Do (data)</label><input className="form-input" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} /></div>
+          <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Grupuj wg</label>
+            <select className="form-select" value={granularity} onChange={e => setGranularity(e.target.value)}>
+              <option value="day">Dzień</option><option value="month">Miesiąc</option><option value="year">Rok</option>
+            </select>
+          </div>
+          <div className="form-group" style={{ marginBottom: 0, minWidth: 180 }}><label className="form-label">Kategoria</label>
+            <select className="form-select" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+              <option value="all">Wszystkie kategorie</option>
+              {allCats.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          {(dateFrom || dateTo || catFilter !== "all") && <div className="form-group" style={{ marginBottom: 0, alignSelf: "flex-end" }}><button className="btn btn-secondary" onClick={() => { setDateFrom(""); setDateTo(""); setCatFilter("all"); }}>✕ Wyczyść</button></div>}
+        </div>
+        {analysisRows.length === 0 ? <div className="empty-state"><div className="icon">📊</div>Brak danych sprzedaży dla wybranych filtrów.</div>
+          : <div className="table-wrap"><table>
+              <thead><tr><th>{granularity === "year" ? "Rok" : granularity === "day" ? "Dzień" : "Miesiąc"}</th><th>Zamówienia</th><th>Sztuki</th><th>Przychód netto</th><th>Przychód brutto</th></tr></thead>
+              <tbody>
+                {analysisRows.map(r => (
+                  <tr key={r.period}><td><strong>{r.period}</strong></td><td>{r.orders}</td><td>{r.qty}</td><td>{fmt(r.net)}</td><td className="font-bold">{fmt(r.gross)}</td></tr>
+                ))}
+                <tr style={{ background: "#f0fdf4", fontWeight: 700 }}><td>RAZEM</td><td>{analysisTotals.orders}</td><td>{analysisTotals.qty}</td><td>{fmt(analysisTotals.net)}</td><td>{fmt(analysisTotals.gross)}</td></tr>
+              </tbody>
+            </table></div>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
