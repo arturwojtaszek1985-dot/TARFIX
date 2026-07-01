@@ -3482,6 +3482,43 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     setForm(f => ({ ...f, documents: (f.documents || []).filter((_, j) => j !== idx) }));
     if (doc?.path) { try { await api.deleteProductDoc(doc.path); } catch (e) { /* plik osierocony — nieblokujące */ } }
   };
+
+  const exportProducts = () => {
+    const money = (n) => (Math.round((+n || 0) * 100) / 100).toFixed(2).replace(".", ",");
+    const rows = [];
+    products.forEach(p => {
+      const status = p.published === false ? "Szkic" : "Opublikowany";
+      if (Array.isArray(p.variants) && p.variants.length > 0) {
+        p.variants.forEach(v => {
+          const net = +v.price || 0;
+          rows.push({
+            SKU: v.sku || "", Nazwa: p.name, Wariant: comboLabel(v.combo),
+            Kategoria: p.category || "", Podkategoria: p.subcategory || "",
+            "Cena netto": money(net), "Cena brutto": money(grossOf(net)),
+            Stan: v.stock ?? 0, Jednostka: p.unit || "", Status: status,
+          });
+        });
+      } else {
+        const gross = +p.price || 0;
+        rows.push({
+          SKU: p.sku || "", Nazwa: p.name, Wariant: "",
+          Kategoria: p.category || "", Podkategoria: p.subcategory || "",
+          "Cena netto": money(netOf(gross)), "Cena brutto": money(gross),
+          Stan: p.stock ?? 0, Jednostka: p.unit || "", Status: status,
+        });
+      }
+    });
+    if (rows.length === 0) { showAlert("Brak produktów do eksportu", "danger"); return; }
+    const csv = Papa.unparse(rows, { delimiter: ";" });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `produkty_tarfix_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showAlert(`Wyeksportowano ${rows.length} pozycji`);
+  };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
@@ -3658,6 +3695,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       <div className="page-header">
         <h1 className="page-title">📦 Produkty</h1>
         <div className="flex gap-2">
+          <button className="btn btn-secondary" onClick={exportProducts}>📊 Eksport do Excela</button>
           <button className="btn btn-secondary" onClick={() => setModal("categories")}>🏷️ Zarządzaj kategoriami</button>
           <button className="btn btn-primary" onClick={openAdd}>+ Dodaj produkt</button>
         </div>
@@ -4081,6 +4119,7 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ role: "customer", discount: "0" });
   const [saving, setSaving] = useState(false);
+  const [q, setQ] = useState("");
 
   // Ładowanie listy klientów z bazy (tabela profiles) przy wejściu na panel.
   useEffect(() => {
@@ -4127,6 +4166,12 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
 
   const editingSelf = editItem && editItem.id === currentUser?.id;
 
+  const qn = q.trim().toLowerCase();
+  const filteredProfiles = qn
+    ? profiles.filter(u => [u.name, u.email, u.company_name, u.nip, u.company_address, u.phone, u.contact_name]
+        .some(v => String(v || "").toLowerCase().includes(qn)))
+    : profiles;
+
   return (
     <>
       <div className="page-header"><h1 className="page-title">👥 Klienci</h1></div>
@@ -4136,14 +4181,22 @@ function AdminUsers({ showAlert, modal, setModal, editItem, setEditItem, current
         <div className="stat-card"><div className="stat-value">{profiles.filter(u => (u.discount || 0) > 0).length}</div><div className="stat-label">Z rabatem</div></div>
       </div>
       <div className="card">
+        <div className="search-bar" style={{ marginBottom: 14 }}>
+          <span className="search-icon">🔍</span>
+          <input className="search-input" placeholder="Szukaj: nazwa, e-mail, firma, NIP, miasto/adres, telefon…" value={q} onChange={e => setQ(e.target.value)} />
+        </div>
         {loading ? <div className="empty-state"><div className="icon">⏳</div>Wczytywanie klientów…</div>
           : profiles.length === 0 ? <div className="empty-state"><div className="icon">👥</div>Brak zarejestrowanych klientów. Konta pojawią się tu automatycznie po rejestracji w sklepie.</div>
+          : filteredProfiles.length === 0 ? <div className="empty-state"><div className="icon">🔍</div>Brak klientów pasujących do „{q}".</div>
           : <div className="table-wrap">
             <table>
-              <thead><tr><th>Klient</th><th>Email</th><th>Rola</th><th>Rabat</th><th>Termin płatności</th><th>Akcje</th></tr></thead>
-              <tbody>{profiles.map(u => (
+              <thead><tr><th>Klient</th><th>Firma</th><th>NIP</th><th>Adres / miasto</th><th>Email</th><th>Rola</th><th>Rabat</th><th>Termin</th><th>Akcje</th></tr></thead>
+              <tbody>{filteredProfiles.map(u => (
                 <tr key={u.id}>
                   <td><strong>{u.name || "—"}</strong>{u.id === currentUser?.id && <span className="badge badge-gray" style={{ marginLeft: 6 }}>To Ty</span>}</td>
+                  <td>{u.company_name || <span className="text-muted">—</span>}</td>
+                  <td className="text-sm" style={{ fontFamily: "monospace" }}>{u.nip || <span className="text-muted">—</span>}</td>
+                  <td className="text-sm text-muted">{u.company_address || "—"}</td>
                   <td className="text-muted">{u.email}</td>
                   <td><span className={`badge ${u.role === "admin" ? "badge-orange" : "badge-blue"}`}>{u.role === "admin" ? "🔧 Admin" : "👤 Klient"}</span></td>
                   <td>{(u.discount || 0) > 0 ? <span className="badge badge-green">🎉 {u.discount}%</span> : <span className="badge badge-gray">Brak</span>}</td>
