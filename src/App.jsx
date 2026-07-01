@@ -304,7 +304,7 @@ const css = `
   .navbar-brand span{color:var(--primary)}
   .nav-left{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
   .nav-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
-  .main{flex:1;padding:28px 24px;max-width:1300px;margin:0 auto;width:100%}
+  .main{flex:1;padding:28px 24px;max-width:1600px;margin:0 auto;width:100%}
 
   .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:8px;font-size:.875rem;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap}
   .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark)}
