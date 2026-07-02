@@ -453,3 +453,34 @@ export async function sendOrderConfirmationEmail(order, contactInfo, recipientEm
 }
 
 
+// ── OFERTY ──────────────────────────────────────────────────────────────────
+export async function fetchOffers() {
+  const { data, error } = await supabase.from("offers").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+export async function createOffer(offer) {
+  const { data, error } = await supabase.from("offers").insert(offer).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateOffer(id, fields) {
+  const { data, error } = await supabase.from("offers").update(fields).eq("id", id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteOffer(id) {
+  const { error } = await supabase.from("offers").delete().eq("id", id);
+  if (error) throw error;
+}
+// Kolejny numer oferty: OF/<nr>/<rok> (licznik roczny w settings: offer_counter).
+export async function nextOfferNumber() {
+  const year = new Date().getFullYear();
+  let counter = null;
+  try { counter = await fetchSetting("offer_counter"); } catch { counter = null; }
+  let next = 1;
+  if (counter && counter.year === year && Number.isFinite(+counter.next)) next = +counter.next;
+  const offerNo = `OF/${next}/${year}`;
+  await saveSetting("offer_counter", { year, next: next + 1 });
+  return offerNo;
+}

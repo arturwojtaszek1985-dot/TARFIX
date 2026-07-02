@@ -787,6 +787,7 @@ export default function App() {
   }, []);
 
   const [page, setPage] = useState("shop");
+  const [pendingOfferDraft, setPendingOfferDraft] = useState(null);
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -1108,6 +1109,7 @@ export default function App() {
                 <button className={`btn btn-ghost ${page === "stats" ? "active" : ""}`} onClick={() => setPage("stats")}>📈 Statystyki</button>
                 <button className={`btn btn-ghost ${page === "quotes" ? "active" : ""}`} onClick={() => setPage("quotes")}>📝 Zapytania</button>
                 <button className={`btn btn-ghost ${page === "shipping" ? "active" : ""}`} onClick={() => setPage("shipping")}>🚚 Dostawa</button>
+                <button className={`btn btn-ghost ${page === "offers" ? "active" : ""}`} onClick={() => setPage("offers")}>📄 Oferty</button>
               </>}
               {!isAdmin && !isGuest && <button className={`btn btn-ghost ${page === "orders" ? "active" : ""}`} onClick={() => setPage("orders")}>📋 Zamówienia</button>}
             </div>
@@ -1153,7 +1155,8 @@ export default function App() {
           {page === "users" && isAdmin && <AdminUsers showAlert={showAlert} modal={modal} setModal={setModal} editItem={editItem} setEditItem={setEditItem} currentUser={currentUser} />}
           {page === "orders" && !isGuest && <OrdersPage orders={isAdmin ? orders : orders.filter(o => o.userId === currentUser.id)} setOrders={setOrders} isAdmin={isAdmin} units={units} contactInfo={contactInfo} showAlert={showAlert} />}
           {page === "stats" && isAdmin && <StatsPage currentUser={currentUser} showAlert={showAlert} />}
-          {page === "quotes" && isAdmin && <QuoteAdminPage showAlert={showAlert} />}
+          {page === "quotes" && isAdmin && <QuoteAdminPage showAlert={showAlert} onRespondOffer={(draft) => { setPendingOfferDraft(draft); setPage("offers"); }} />}
+          {page === "offers" && isAdmin && <OffersPage products={products} contactInfo={contactInfo} showAlert={showAlert} pendingDraft={pendingOfferDraft} clearPendingDraft={() => setPendingOfferDraft(null)} />}
           {page === "shipping" && isAdmin && <ShippingAdminPage showAlert={showAlert} onSaved={(methods) => { setShippingMethods(methods); if (!methods.find(m => m.id === selectedShipId)) setSelectedShipId(methods[0]?.id || ""); }} />}
           {page === "account" && !isGuest && <AccountPage currentUser={currentUser} showAlert={showAlert} />}
           {page === "reklamacje" && <ReklamacjePage currentUser={currentUser} isGuest={isGuest} isAdmin={isAdmin} showAlert={showAlert} />}
@@ -2939,6 +2942,8 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
   const [grouped, setGrouped] = useState([]); // produkty z wariantami (podgląd)
   const [pricePreview, setPricePreview] = useState([]); // dopasowane zmiany cen
   const [priceUnmatched, setPriceUnmatched] = useState([]); // SKU z pliku bez dopasowania
+  const [stockPreview, setStockPreview] = useState([]); // dopasowane zmiany stanów
+  const [stockUnmatched, setStockUnmatched] = useState([]);
   const fileRef = useRef();
 
   const FIELDS = [
@@ -3252,6 +3257,83 @@ function CsvImportPage({ products, setProducts, units, setUnits, showAlert, setL
     setStep(4);
   };
 
+  // ── TRYB STANÓW: aktualizacja stanów magazynowych po SKU (produkty i warianty) ──
+  const buildStockPreview = () => {
+    if (!rawData) return;
+    const stockMap = new Map();
+    rawData.forEach(row => {
+      const sku = String(row[mapping.sku] || "").trim();
+      if (!sku) return;
+      stockMap.set(sku.toLowerCase(), Math.max(0, Math.round(parseNum(row[mapping.stock]))));
+    });
+    const matched = [];
+    const usedSkus = new Set();
+    products.forEach(p => {
+      if (hasVariants(p)) {
+        (p.variants || []).forEach(v => {
+          const key = String(v.sku || "").trim().toLowerCase();
+          if (key && stockMap.has(key)) {
+            usedSkus.add(key);
+            const newStock = stockMap.get(key);
+            if (newStock !== (+v.stock || 0)) matched.push({ type: "variant", productId: p.id, variantId: v.id, sku: v.sku, name: `${p.name} · ${comboLabel(v.combo)}`, oldStock: +v.stock || 0, newStock });
+          }
+        });
+      } else {
+        const key = String(p.sku || "").trim().toLowerCase();
+        if (key && stockMap.has(key)) {
+          usedSkus.add(key);
+          const newStock = stockMap.get(key);
+          if (newStock !== (+p.stock || 0)) matched.push({ type: "product", productId: p.id, sku: p.sku, name: p.name, oldStock: +p.stock || 0, newStock });
+        }
+      }
+    });
+    const unmatched = [];
+    stockMap.forEach((_, key) => { if (!usedSkus.has(key)) unmatched.push(key); });
+    setStockPreview(matched);
+    setStockUnmatched(unmatched);
+    setStep(3);
+  };
+
+  const doStockImport = async () => {
+    const byProduct = new Map();
+    stockPreview.forEach(m => { if (!byProduct.has(m.productId)) byProduct.set(m.productId, []); byProduct.get(m.productId).push(m); });
+    let changed = 0;
+    try {
+      const newProds = [...products];
+      for (const [pid, changes] of byProduct.entries()) {
+        const idx = newProds.findIndex(p => p.id === pid);
+        if (idx < 0) continue;
+        const prod = newProds[idx];
+        let payload, mappedLocal;
+        if (hasVariants(prod)) {
+          const newVariants = (prod.variants || []).map(v => {
+            const ch = changes.find(c => c.type === "variant" && c.variantId === v.id);
+            return ch ? { ...v, stock: ch.newStock } : v;
+          });
+          const total = newVariants.reduce((s, v) => s + (+v.stock || 0), 0);
+          payload = { variants: newVariants, stock: total };
+          mappedLocal = { ...prod, variants: newVariants, stock: total };
+        } else {
+          const ch = changes.find(c => c.type === "product");
+          if (!ch) continue;
+          payload = { stock: ch.newStock };
+          mappedLocal = { ...prod, stock: ch.newStock };
+        }
+        await api.updateProductStock(pid, payload);
+        newProds[idx] = mappedLocal;
+        changed += changes.length;
+      }
+      setProducts(newProds);
+    } catch (err) {
+      showAlert("Błąd zapisu stanów do bazy danych: " + err.message, "danger");
+      return;
+    }
+    setResult({ added: 0, updated: changed, unchanged: stockUnmatched.length, total: stockPreview.length, stockMode: true });
+    setLastSync({ file: fileName, imported: changed, time: new Date().toLocaleTimeString("pl-PL") });
+    showAlert(`✅ Zaktualizowano ${changed} ${changed === 1 ? "stan" : "stanów"} po SKU`, "success");
+    setStep(4);
+  };
+
   const doImport = async () => {
     // Najpierw rejestrujemy w systemie wszystkie nowe jednostki znalezione w pliku
     if (pendingNewUnits.length > 0) {
@@ -3414,6 +3496,9 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
               <label className={`attr-tile ${importMode === "prices" ? "active" : ""}`} style={{ cursor: "pointer" }}>
                 <input type="radio" name="impmode" checked={importMode === "prices"} onChange={() => setImportMode("prices")} style={{ marginRight: 6 }} />💰 Aktualizacja cen (po SKU)
               </label>
+              <label className={`attr-tile ${importMode === "stock" ? "active" : ""}`} style={{ cursor: "pointer" }}>
+                <input type="radio" name="impmode" checked={importMode === "stock"} onChange={() => setImportMode("stock")} style={{ marginRight: 6 }} />📊 Aktualizacja stanów (po SKU)
+              </label>
             </div>
 
             {importMode === "variants" && (
@@ -3459,10 +3544,15 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
                 </div>
               </div>
             )}
+            {importMode === "stock" && (
+              <div style={{ marginTop: 12 }}>
+                <div className="text-sm text-muted">Dopasuje wiersze do istniejących produktów <strong>i wariantów po SKU</strong> i zmieni tylko <strong>stan magazynowy</strong>. Reszta danych bez zmian. Dla produktów z wariantami stan produktu = suma stanów wariantów. Potrzebne kolumny: <strong>SKU</strong> i <strong>Stan magazynowy</strong> (mapowanie wyżej).</div>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3 mt-4">
-            <button className="btn btn-primary" onClick={importMode === "variants" ? buildVariantPreview : importMode === "prices" ? buildPricePreview : buildPreview}>Dalej: Podgląd zmian →</button>
+            <button className="btn btn-primary" onClick={importMode === "variants" ? buildVariantPreview : importMode === "prices" ? buildPricePreview : importMode === "stock" ? buildStockPreview : buildPreview}>Dalej: Podgląd zmian →</button>
             <button className="btn btn-secondary" onClick={reset}>← Wróć</button>
           </div>
         </div>
@@ -3540,6 +3630,46 @@ SLU-002;Słuchawki Bluetooth;Elektronika;243,09;299,00;30;Opis produktu;szt`}</d
           )}
           <div className="flex gap-3 mt-4">
             <button className="btn btn-primary" onClick={doPriceImport} disabled={pricePreview.length === 0}>💰 Zaktualizuj {pricePreview.length} cen</button>
+            <button className="btn btn-secondary" onClick={() => setStep(2)}>← Wróć do ustawień</button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && importMode === "stock" && (
+        <div className="card">
+          <h3 className="card-title">Podgląd zmian stanów — dopasowano po SKU</h3>
+          <div className="info-box mb-3">
+            Dopasowano <strong>{stockPreview.length}</strong> {stockPreview.length === 1 ? "pozycję" : "pozycji"} do zmiany.
+            {stockUnmatched.length > 0 && <> Z pliku <strong>{stockUnmatched.length}</strong> SKU nie pasuje do żadnego produktu/wariantu (pominięte).</>}
+          </div>
+          {stockPreview.length === 0 ? (
+            <div className="empty-state"><div className="icon">📊</div>Brak zmian — żaden SKU z pliku nie pasuje, albo stany są już aktualne.</div>
+          ) : (
+            <div className="preview-table-wrap" style={{ maxHeight: 420 }}>
+              <table className="preview-table">
+                <thead><tr><th>Typ</th><th>SKU</th><th>Produkt / wariant</th><th>Stan teraz</th><th>Nowy stan</th></tr></thead>
+                <tbody>
+                  {stockPreview.map((m, i) => (
+                    <tr key={i}>
+                      <td><span className={`badge ${m.type === "variant" ? "badge-blue" : "badge-gray"}`}>{m.type === "variant" ? "wariant" : "produkt"}</span></td>
+                      <td className="text-sm" style={{ fontFamily: "monospace" }}>{m.sku}</td>
+                      <td>{m.name}</td>
+                      <td className="text-sm text-muted">{m.oldStock}</td>
+                      <td className="font-bold" style={{ color: m.newStock > m.oldStock ? "var(--success)" : m.newStock < m.oldStock ? "var(--danger)" : "inherit" }}>{m.newStock}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {stockUnmatched.length > 0 && (
+            <details style={{ marginTop: 12 }}>
+              <summary className="text-sm text-muted" style={{ cursor: "pointer" }}>Pokaż {stockUnmatched.length} niedopasowanych SKU z pliku</summary>
+              <div className="text-sm text-muted" style={{ marginTop: 6, fontFamily: "monospace", maxHeight: 120, overflow: "auto" }}>{stockUnmatched.join(", ")}</div>
+            </details>
+          )}
+          <div className="flex gap-3 mt-4">
+            <button className="btn btn-primary" onClick={doStockImport} disabled={stockPreview.length === 0}>📊 Zaktualizuj {stockPreview.length} stanów</button>
             <button className="btn btn-secondary" onClick={() => setStep(2)}>← Wróć do ustawień</button>
           </div>
         </div>
@@ -4730,7 +4860,211 @@ function ShippingAdminPage({ showAlert, onSaved }) {
   );
 }
 
-function QuoteAdminPage({ showAlert }) {
+function OffersPage({ products, contactInfo, showAlert, pendingDraft, clearPendingDraft }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // obiekt oferty w edycji lub null
+  const [saving, setSaving] = useState(false);
+  const [pickSel, setPickSel] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { const d = await api.fetchOffers(); if (!cancelled) setList(d || []); }
+      catch (e) { if (!cancelled) showAlert("Nie udało się wczytać ofert: " + e.message, "danger"); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Prefill z zapytania ofertowego
+  useEffect(() => {
+    if (pendingDraft) { setEditing(pendingDraft); clearPendingDraft && clearPendingDraft(); }
+  }, [pendingDraft]);
+
+  const blank = () => ({
+    customer_name: "", customer_company: "", customer_email: "", customer_phone: "", customer_nip: "", customer_address: "",
+    items: [], note: "", valid_until: "", status: "Robocza", quote_request_id: null,
+  });
+
+  // Opcje do wyboru produktu/wariantu
+  const pickOptions = [];
+  products.forEach(p => {
+    if (Array.isArray(p.variants) && p.variants.length > 0) {
+      p.variants.forEach(v => pickOptions.push({ key: `${p.id}__${v.id}`, name: `${p.name} — ${comboLabel(v.combo)}`, sku: v.sku || "", unitNet: +v.price || 0 }));
+    } else {
+      pickOptions.push({ key: String(p.id), name: p.name, sku: p.sku || "", unitNet: netOf(+p.price || 0) });
+    }
+  });
+
+  const addPickItem = () => {
+    const opt = pickOptions.find(o => o.key === pickSel);
+    if (!opt) return;
+    setEditing(e => ({ ...e, items: [...(e.items || []), { name: opt.name, sku: opt.sku, qty: 1, unitNet: opt.unitNet }] }));
+    setPickSel("");
+  };
+  const addManualItem = () => setEditing(e => ({ ...e, items: [...(e.items || []), { name: "", sku: "", qty: 1, unitNet: 0 }] }));
+  const setItem = (i, patch) => setEditing(e => ({ ...e, items: e.items.map((x, j) => j === i ? { ...x, ...patch } : x) }));
+  const removeItem = (i) => setEditing(e => ({ ...e, items: e.items.filter((_, j) => j !== i) }));
+
+  const totNet = (editing?.items || []).reduce((s, it) => s + (+it.unitNet || 0) * (+it.qty || 0), 0);
+  const totGross = Math.round(totNet * (1 + VAT_RATE) * 100) / 100;
+
+  const save = async (thenPdf) => {
+    if (!editing) return;
+    if (!(editing.customer_name || editing.customer_company)) { showAlert("Podaj nazwę klienta lub firmę", "danger"); return; }
+    if ((editing.items || []).length === 0) { showAlert("Dodaj przynajmniej jedną pozycję", "danger"); return; }
+    setSaving(true);
+    try {
+      let offerNo = editing.offer_no;
+      if (!offerNo) offerNo = await api.nextOfferNumber();
+      const payload = {
+        offer_no: offerNo,
+        customer_name: editing.customer_name || null, customer_company: editing.customer_company || null,
+        customer_email: editing.customer_email || null, customer_phone: editing.customer_phone || null,
+        customer_nip: editing.customer_nip || null, customer_address: editing.customer_address || null,
+        items: (editing.items || []).map(it => ({ name: it.name || "", sku: it.sku || "", qty: +it.qty || 0, unitNet: Math.round((+it.unitNet || 0) * 100) / 100 })),
+        note: editing.note || null, valid_until: editing.valid_until || null, status: editing.status || "Robocza",
+        quote_request_id: editing.quote_request_id || null,
+        total_net: Math.round(totNet * 100) / 100, total_gross: totGross,
+      };
+      let saved;
+      if (editing.id) saved = await api.updateOffer(editing.id, payload);
+      else saved = await api.createOffer(payload);
+      setList(prev => { const rest = prev.filter(o => o.id !== saved.id); return [saved, ...rest]; });
+      showAlert("Oferta zapisana.");
+      if (thenPdf) generateOfferPDF(saved, contactInfo);
+      setEditing(null);
+    } catch (err) {
+      showAlert("Nie udało się zapisać oferty: " + err.message, "danger");
+    } finally { setSaving(false); }
+  };
+
+  const remove = async (o) => {
+    if (!window.confirm(`Usunąć ofertę ${o.offer_no || ""}?`)) return;
+    try { await api.deleteOffer(o.id); setList(prev => prev.filter(x => x.id !== o.id)); showAlert("Oferta usunięta."); }
+    catch (e) { showAlert("Nie udało się usunąć: " + e.message, "danger"); }
+  };
+  const changeStatus = async (o, status) => {
+    try { await api.updateOffer(o.id, { status }); setList(prev => prev.map(x => x.id === o.id ? { ...x, status } : x)); }
+    catch (e) { showAlert("Nie udało się zmienić statusu: " + e.message, "danger"); }
+  };
+
+  if (editing) {
+    return (
+      <>
+        <div className="page-header"><h1 className="page-title">📄 {editing.id ? "Edycja oferty" : "Nowa oferta"}{editing.offer_no ? ` — ${editing.offer_no}` : ""}</h1></div>
+        <div className="card">
+          <h3 className="card-title">Dane klienta</h3>
+          <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+            <div className="form-group" style={{ flex: "1 1 220px" }}><label className="form-label">Nazwa firmy</label><input className="form-input" value={editing.customer_company} onChange={e => setEditing(v => ({ ...v, customer_company: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: "1 1 200px" }}><label className="form-label">Osoba / imię i nazwisko</label><input className="form-input" value={editing.customer_name} onChange={e => setEditing(v => ({ ...v, customer_name: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: "1 1 140px" }}><label className="form-label">NIP</label><input className="form-input" value={editing.customer_nip} onChange={e => setEditing(v => ({ ...v, customer_nip: e.target.value }))} /></div>
+          </div>
+          <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+            <div className="form-group" style={{ flex: "1 1 200px" }}><label className="form-label">E-mail</label><input className="form-input" value={editing.customer_email} onChange={e => setEditing(v => ({ ...v, customer_email: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: "1 1 160px" }}><label className="form-label">Telefon</label><input className="form-input" value={editing.customer_phone} onChange={e => setEditing(v => ({ ...v, customer_phone: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: "2 1 260px" }}><label className="form-label">Adres</label><input className="form-input" value={editing.customer_address} onChange={e => setEditing(v => ({ ...v, customer_address: e.target.value }))} /></div>
+          </div>
+        </div>
+
+        <div className="card">
+          <h3 className="card-title">Pozycje oferty</h3>
+          <div className="flex gap-2 items-end" style={{ flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ flex: "1 1 320px" }}>
+              <label className="form-label">Dodaj z katalogu</label>
+              <select className="form-select" value={pickSel} onChange={e => setPickSel(e.target.value)}>
+                <option value="">— wybierz produkt/wariant —</option>
+                {pickOptions.map(o => <option key={o.key} value={o.key}>{o.name}{o.sku ? ` [${o.sku}]` : ""} — {fmt(o.unitNet)} netto</option>)}
+              </select>
+            </div>
+            <button className="btn btn-secondary" onClick={addPickItem} disabled={!pickSel}>+ Dodaj z katalogu</button>
+            <button className="btn btn-secondary" onClick={addManualItem}>+ Pozycja ręczna</button>
+          </div>
+
+          {(editing.items || []).length === 0 ? <div className="empty-state"><div className="icon">🧾</div>Brak pozycji — dodaj z katalogu lub ręcznie.</div> : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Nazwa</th><th>SKU</th><th style={{ width: 90 }}>Ilość</th><th style={{ width: 130 }}>Cena netto</th><th style={{ width: 120 }}>Wartość netto</th><th></th></tr></thead>
+                <tbody>
+                  {editing.items.map((it, i) => (
+                    <tr key={i}>
+                      <td><input className="form-input" value={it.name} onChange={e => setItem(i, { name: e.target.value })} /></td>
+                      <td><input className="form-input" style={{ maxWidth: 120 }} value={it.sku} onChange={e => setItem(i, { sku: e.target.value })} /></td>
+                      <td><input className="form-input" type="number" min="0" step="1" value={it.qty} onChange={e => setItem(i, { qty: e.target.value })} /></td>
+                      <td><input className="form-input" type="number" min="0" step="0.01" value={it.unitNet} onChange={e => setItem(i, { unitNet: e.target.value })} /></td>
+                      <td className="font-bold">{fmt((+it.unitNet || 0) * (+it.qty || 0))}</td>
+                      <td><button className="btn btn-danger btn-sm" onClick={() => removeItem(i)}>🗑️</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{ textAlign: "right", marginTop: 12, fontSize: ".95rem" }}>
+            <div>Razem netto: <strong>{fmt(totNet)}</strong></div>
+            <div className="text-muted text-sm">VAT 23%: {fmt(totGross - totNet)}</div>
+            <div style={{ fontSize: "1.1rem", color: "var(--primary)" }}>Razem brutto: <strong>{fmt(totGross)}</strong></div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+            <div className="form-group" style={{ flex: "1 1 160px" }}><label className="form-label">Ważna do</label><input className="form-input" type="date" value={editing.valid_until || ""} onChange={e => setEditing(v => ({ ...v, valid_until: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: "1 1 160px" }}><label className="form-label">Status</label>
+              <select className="form-select" value={editing.status} onChange={e => setEditing(v => ({ ...v, status: e.target.value }))}>
+                {["Robocza", "Wysłana", "Zaakceptowana", "Odrzucona"].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-group"><label className="form-label">Uwagi / warunki (na PDF)</label><textarea className="form-input" rows={3} value={editing.note} onChange={e => setEditing(v => ({ ...v, note: e.target.value }))} placeholder="np. termin realizacji, warunki dostawy, rabaty…" /></div>
+          <div className="flex gap-3 mt-2" style={{ flexWrap: "wrap" }}>
+            <button className="btn btn-primary" onClick={() => save(false)} disabled={saving}>{saving ? "Zapisywanie…" : "💾 Zapisz"}</button>
+            <button className="btn btn-primary" onClick={() => save(true)} disabled={saving}>💾 Zapisz i pobierz PDF</button>
+            <button className="btn btn-secondary" onClick={() => setEditing(null)}>Anuluj</button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-header">
+        <h1 className="page-title">📄 Oferty</h1>
+        <button className="btn btn-primary" onClick={() => setEditing(blank())}>+ Nowa oferta</button>
+      </div>
+      <div className="card">
+        {loading ? <p className="text-muted">Wczytywanie…</p>
+          : list.length === 0 ? <div className="empty-state"><div className="icon">📄</div>Brak ofert. Kliknij „Nowa oferta" albo odpowiedz ofertą na zapytanie (panel Zapytania).</div>
+          : <div className="table-wrap"><table>
+              <thead><tr><th>Nr</th><th>Data</th><th>Klient</th><th>Poz.</th><th>Wartość netto</th><th>Ważna do</th><th>Status</th><th>Akcje</th></tr></thead>
+              <tbody>{list.map(o => (
+                <tr key={o.id}>
+                  <td className="text-sm" style={{ fontFamily: "monospace" }}>{o.offer_no || "—"}</td>
+                  <td className="text-sm text-muted">{o.created_at ? new Date(o.created_at).toLocaleDateString("pl-PL") : "—"}</td>
+                  <td><strong>{o.customer_company || o.customer_name || "—"}</strong>{o.customer_company && o.customer_name ? <div className="text-sm text-muted">{o.customer_name}</div> : null}</td>
+                  <td>{(o.items || []).length}</td>
+                  <td className="font-bold">{fmt(o.total_net || 0)}</td>
+                  <td className="text-sm text-muted">{o.valid_until || "—"}</td>
+                  <td><select className="form-select" style={{ padding: "5px 8px" }} value={o.status || "Robocza"} onChange={e => changeStatus(o, e.target.value)}>{["Robocza", "Wysłana", "Zaakceptowana", "Odrzucona"].map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                  <td>
+                    <div className="flex gap-2">
+                      <button className="btn btn-secondary btn-sm" onClick={() => generateOfferPDF(o, contactInfo)}>📄 PDF</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setEditing({ ...o, items: Array.isArray(o.items) ? o.items : [] })}>✏️</button>
+                      <button className="btn btn-danger btn-sm" onClick={() => remove(o)}>🗑️</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table></div>}
+      </div>
+    </>
+  );
+}
+
+function QuoteAdminPage({ showAlert, onRespondOffer }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -4753,7 +5087,7 @@ function QuoteAdminPage({ showAlert }) {
         {loading ? <p className="text-muted">Wczytywanie…</p>
           : list.length === 0 ? <div className="empty-state"><div className="icon">📝</div>Brak zapytań ofertowych</div>
           : <div className="table-wrap"><table>
-              <thead><tr><th>Data</th><th>Klient</th><th>Produkt</th><th>Ilość</th><th>Wiadomość</th><th>Status</th></tr></thead>
+              <thead><tr><th>Data</th><th>Klient</th><th>Produkt</th><th>Ilość</th><th>Wiadomość</th><th>Status</th><th>Akcje</th></tr></thead>
               <tbody>{list.map(q => (
                 <tr key={q.id}>
                   <td className="text-sm text-muted">{new Date(q.created_at).toLocaleDateString("pl-PL")}</td>
@@ -4762,6 +5096,12 @@ function QuoteAdminPage({ showAlert }) {
                   <td>{q.quantity ?? "—"}</td>
                   <td style={{ maxWidth: 260, whiteSpace: "pre-wrap" }}>{q.message || "—"}</td>
                   <td><select className="form-select" style={{ padding: "5px 8px" }} value={q.status} onChange={e => changeStatus(q.id, e.target.value)}>{QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                  <td><button className="btn btn-primary btn-sm" onClick={() => onRespondOffer && onRespondOffer({
+                    customer_name: q.name || "", customer_company: q.company || "", customer_email: q.email || "", customer_phone: q.phone || "",
+                    customer_nip: "", customer_address: "",
+                    items: q.product_name ? [{ name: q.product_name, sku: "", qty: +q.quantity || 1, unitNet: 0 }] : [],
+                    note: q.message ? `Zapytanie klienta: ${q.message}` : "", valid_until: "", status: "Robocza", quote_request_id: q.id,
+                  })}>📄 Odpowiedz ofertą</button></td>
                 </tr>
               ))}</tbody>
             </table></div>}
@@ -5219,6 +5559,107 @@ function generateInvoicePDF(order, contactInfo, units, invoiceNo) {
   doc.text(pdfText("Dokument wygenerowany automatycznie."), marginX, 288);
 
   doc.save(`faktura_${invNo.replace(/\//g, "-")}.pdf`);
+}
+
+// Oferta handlowa (PDF). Ceny pozycji oferty są NETTO (unitNet).
+function generateOfferPDF(offer, contactInfo) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 16;
+  const rightX = pageWidth - marginX;
+  const money = (n) => (Math.round((+n || 0) * 100) / 100).toFixed(2).replace(".", ",");
+  const VAT = 0.23;
+  let y = 18;
+
+  const created = offer.created_at ? new Date(offer.created_at) : new Date();
+  const dateStr = created.toISOString().slice(0, 10);
+  const offerNo = offer.offer_no || offer.offerNo || "OFERTA";
+  const validStr = offer.valid_until || offer.validUntil || "";
+
+  doc.setFontSize(18); doc.setFont("helvetica", "bold");
+  doc.text(pdfText("OFERTA"), marginX, y);
+  doc.setFontSize(10); doc.setFont("helvetica", "normal");
+  doc.text(pdfText(`Nr: ${offerNo}`), rightX, y - 4, { align: "right" });
+  doc.text(pdfText(`Data: ${dateStr}`), rightX, y + 1, { align: "right" });
+  if (validStr) doc.text(pdfText(`Wazna do: ${validStr}`), rightX, y + 6, { align: "right" });
+  y += 14;
+
+  const colR = pageWidth / 2 + 4;
+  doc.setFontSize(9); doc.setFont("helvetica", "bold");
+  doc.text(pdfText("Oferent:"), marginX, y);
+  doc.text(pdfText("Dla:"), colR, y);
+  doc.setFont("helvetica", "normal");
+  let ys = y + 5, yn = y + 5;
+  const putL = (t) => { if (t) { doc.text(pdfText(t), marginX, ys); ys += 4.5; } };
+  const putR = (t) => { if (t) { doc.text(pdfText(t), colR, yn); yn += 4.5; } };
+  putL(contactInfo?.companyName || "TARFIX");
+  putL(contactInfo?.address);
+  if (contactInfo?.nip) putL(`NIP: ${contactInfo.nip}`);
+  if (contactInfo?.email) putL(`E-mail: ${contactInfo.email}`);
+  if (contactInfo?.phone) putL(`Tel: ${contactInfo.phone}`);
+  putR(offer.customer_company || offer.customer_name || "Klient");
+  if (offer.customer_company && offer.customer_name) putR(offer.customer_name);
+  putR(offer.customer_address);
+  if (offer.customer_nip) putR(`NIP: ${offer.customer_nip}`);
+  if (offer.customer_email) putR(offer.customer_email);
+  if (offer.customer_phone) putR(`Tel: ${offer.customer_phone}`);
+  y = Math.max(ys, yn) + 6;
+
+  // Tabela pozycji
+  const cX = { lp: marginX, name: marginX + 8, qty: marginX + 92, unit: marginX + 112, net: marginX + 138, gross: rightX };
+  doc.setFillColor(240, 245, 242); doc.rect(marginX, y - 4, rightX - marginX, 7, "F");
+  doc.setFontSize(8); doc.setFont("helvetica", "bold");
+  doc.text("Lp", cX.lp, y);
+  doc.text(pdfText("Nazwa / SKU"), cX.name, y);
+  doc.text(pdfText("Ilosc"), cX.qty + 14, y, { align: "right" });
+  doc.text(pdfText("Cena netto"), cX.unit + 22, y, { align: "right" });
+  doc.text(pdfText("Wart. netto"), cX.net + 20, y, { align: "right" });
+  doc.text(pdfText("Wart. brutto"), cX.gross, y, { align: "right" });
+  y += 6; doc.setFont("helvetica", "normal");
+
+  let sumNet = 0, lp = 0;
+  (offer.items || []).forEach(it => {
+    const qty = Number(it.qty) || 0;
+    const unitNet = Number(it.unitNet) || 0;
+    const lineNet = Math.round(unitNet * qty * 100) / 100;
+    sumNet += lineNet; lp += 1;
+    const nameLines = doc.splitTextToSize(pdfText(`${it.name || ""}${it.sku ? `  [${it.sku}]` : ""}`), 78);
+    doc.text(String(lp), cX.lp, y);
+    doc.text(nameLines, cX.name, y);
+    doc.text(String(qty), cX.qty + 14, y, { align: "right" });
+    doc.text(money(unitNet), cX.unit + 22, y, { align: "right" });
+    doc.text(money(lineNet), cX.net + 20, y, { align: "right" });
+    doc.text(money(Math.round(lineNet * (1 + VAT) * 100) / 100), cX.gross, y, { align: "right" });
+    y += Math.max(5, nameLines.length * 4.2);
+    if (y > 250) { doc.addPage(); y = 20; }
+  });
+
+  y += 2; doc.setDrawColor(200); doc.line(marginX, y, rightX, y); y += 6;
+  const vat = Math.round(sumNet * VAT * 100) / 100;
+  const gross = Math.round((sumNet + vat) * 100) / 100;
+  doc.setFontSize(9);
+  const sumRow = (label, val, bold) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.text(pdfText(label), rightX - 46, y, { align: "right" });
+    doc.text(pdfText(`${money(val)} zl`), rightX, y, { align: "right" });
+    y += 5.5;
+  };
+  sumRow("Razem netto:", sumNet);
+  sumRow("VAT 23%:", vat);
+  doc.setFontSize(11);
+  sumRow("Razem brutto:", gross, true);
+  doc.setFontSize(9); doc.setFont("helvetica", "normal");
+
+  if (offer.note) {
+    y += 4;
+    doc.setFont("helvetica", "bold"); doc.text(pdfText("Uwagi:"), marginX, y); doc.setFont("helvetica", "normal"); y += 5;
+    doc.splitTextToSize(pdfText(offer.note), rightX - marginX).forEach(line => { doc.text(line, marginX, y); y += 4.5; });
+  }
+
+  doc.setFontSize(8); doc.setTextColor(150);
+  doc.text(pdfText("Oferta ma charakter informacyjny i nie stanowi oferty w rozumieniu Kodeksu cywilnego, chyba ze zaznaczono inaczej."), marginX, 286);
+
+  doc.save(`oferta_${String(offerNo).replace(/\//g, "-")}.pdf`);
 }
 
 
