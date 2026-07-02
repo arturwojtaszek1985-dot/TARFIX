@@ -2550,8 +2550,8 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
 
       <div className="pdp-grid">
         <div className="pdp-image-box">
-          {product.photo
-            ? <><img src={product.photo} alt={product.name} /><img src={LOGO_TARFIX} alt="" className="img-watermark" /></>
+          {(matched?.photo || product.photo)
+            ? <><img src={matched?.photo || product.photo} alt={product.name} /><img src={LOGO_TARFIX} alt="" className="img-watermark" /></>
             : <span className="emoji-fallback">{product.image}</span>}
         </div>
 
@@ -3621,6 +3621,8 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   const [delTarget, setDelTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [docUploading, setDocUploading] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [variantPhotoUploading, setVariantPhotoUploading] = useState(null);
   const [tagInput, setTagInput] = useState("");
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const toggleSelect = (id) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -3633,15 +3635,31 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   const [catFilter, setCatFilter] = useState(categories[0]?.name || "");
   const emojis = ["📦", "💻", "🎧", "📱", "👕", "👟", "🍕", "☕", "📘", "🎒", "⌚", "🏋️", "🎮", "🌿"];
 
-  const handlePhotoUpload = (e) => {
+  const handlePhotoUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) return showAlert("Wybierz plik graficzny (JPG, PNG)", "danger");
-    if (file.size > 2 * 1024 * 1024) return showAlert("Plik jest większy niż 2 MB — wybierz mniejsze zdjęcie", "danger");
-    const reader = new FileReader();
-    reader.onload = () => setForm(f => ({ ...f, photo: reader.result }));
-    reader.onerror = () => showAlert("Nie udało się wczytać zdjęcia", "danger");
-    reader.readAsDataURL(file);
+    if (file.size > 5 * 1024 * 1024) return showAlert("Plik większy niż 5 MB — wybierz mniejsze zdjęcie", "danger");
+    setPhotoUploading(true);
+    try {
+      const { url } = await api.uploadProductImage(file);
+      setForm(f => ({ ...f, photo: url }));
+    } catch (err) {
+      showAlert("Nie udało się wgrać zdjęcia: " + err.message, "danger");
+    } finally { setPhotoUploading(false); }
+  };
+
+  const handleVariantPhotoUpload = async (variantId, file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return showAlert("Wybierz plik graficzny (JPG, PNG)", "danger");
+    if (file.size > 5 * 1024 * 1024) return showAlert("Plik większy niż 5 MB", "danger");
+    setVariantPhotoUploading(variantId);
+    try {
+      const { url } = await api.uploadProductImage(file);
+      setForm(f => ({ ...f, variants: f.variants.map(v => v.id === variantId ? { ...v, photo: url } : v) }));
+    } catch (err) {
+      showAlert("Nie udało się wgrać zdjęcia wariantu: " + err.message, "danger");
+    } finally { setVariantPhotoUploading(null); }
   };
 
   const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], priceNet: "" }); setEditItem(null); setModal("product"); };
@@ -3702,7 +3720,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
-    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? "") })) : [];
+    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? ""), photo: v.photo || "" })) : [];
     const gorder = (groups || []).map(g => g.name);
     vars.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; });
     setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], attributeGroups: groups, variants: vars });
@@ -3728,7 +3746,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
           combo[g.name] = val;
         }
         if (price <= 0) return showAlert(`Wariant ${i + 1}: cena netto musi być większa od 0`, "danger");
-        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0, stock: +v.stock || 0 });
+        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0, stock: +v.stock || 0, photo: v.photo || "" });
       }
     }
     // Zapisujemy warianty w kolejności posortowanej (naturalnie wg wartości) — spójnie ze sklepem.
@@ -3960,12 +3978,12 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                     {form.photo ? <img src={form.photo} alt="podgląd" /> : <span style={{ fontSize: "2.2rem" }}>{form.image}</span>}
                   </div>
                   <div className="flex gap-2" style={{ flexDirection: "column" }}>
-                    <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", width: "fit-content" }}>
-                      📷 {form.photo ? "Zmień zdjęcie" : "Wgraj zdjęcie"}
-                      <input type="file" accept="image/*" style={{ display: "none" }} onChange={handlePhotoUpload} />
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: photoUploading ? "wait" : "pointer", width: "fit-content", opacity: photoUploading ? 0.6 : 1 }}>
+                      {photoUploading ? "⏳ Wgrywanie…" : `📷 ${form.photo ? "Zmień zdjęcie" : "Wgraj zdjęcie"}`}
+                      <input type="file" accept="image/*" style={{ display: "none" }} disabled={photoUploading} onChange={handlePhotoUpload} />
                     </label>
                     {form.photo && <button type="button" className="btn btn-danger btn-sm" style={{ width: "fit-content" }} onClick={() => setForm(f => ({ ...f, photo: "" }))}>🗑️ Usuń zdjęcie</button>}
-                    <span className="text-sm text-muted">JPG/PNG, max 2 MB. Bez zdjęcia produkt wyświetli ikonę.</span>
+                    <span className="text-sm text-muted">JPG/PNG, max 5 MB. Zdjęcia trzymane w Supabase Storage. Bez zdjęcia produkt wyświetli ikonę.</span>
                   </div>
                 </div>
               </div>
@@ -4129,6 +4147,12 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                             onChange={e => uv(v.id, { weight: e.target.value })} />
                           <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="1" min="0" placeholder="Stan" value={v.stock}
                             onChange={e => uv(v.id, { stock: e.target.value })} />
+                          {v.photo && <img src={v.photo} alt="" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 6, border: "1px solid var(--border)", background: "#fff" }} />}
+                          <label className="btn btn-secondary btn-sm" style={{ cursor: variantPhotoUploading === v.id ? "wait" : "pointer", opacity: variantPhotoUploading === v.id ? 0.6 : 1 }} title="Zdjęcie wariantu">
+                            {variantPhotoUploading === v.id ? "⏳" : (v.photo ? "🔄" : "📷")}
+                            <input type="file" accept="image/*" style={{ display: "none" }} disabled={variantPhotoUploading === v.id} onChange={e => handleVariantPhotoUpload(v.id, e.target.files[0])} />
+                          </label>
+                          {v.photo && <button type="button" className="btn btn-danger btn-sm" title="Usuń zdjęcie wariantu" onClick={() => uv(v.id, { photo: "" })}>🖼️✕</button>}
                           <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter(x => x.id !== v.id) }))}>🗑️</button>
                         </div>
                       ));
