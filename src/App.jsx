@@ -700,6 +700,7 @@ export default function App() {
             published: p.published !== false,
             documents: Array.isArray(p.documents) ? p.documents : [],
             tags: Array.isArray(p.tags) ? p.tags : [],
+            gallery: Array.isArray(p.gallery) ? p.gallery : [],
             attributeGroups: Array.isArray(p.attribute_groups) ? p.attribute_groups : [],
             variants: Array.isArray(p.variants) ? p.variants.map(v => ({
               id: v.id || String(Math.random()).slice(2),
@@ -2368,6 +2369,8 @@ function ShopPage({ loading, products, categories, categoriesFull, filterCat, se
 function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFloors, productRatings, currentUser, isGuest, isAdmin, showAlert }) {
   const [combo, setCombo] = useState({});
   const [qty, setQty] = useState(1);
+  const [activeImg, setActiveImg] = useState(null);
+  const [lightbox, setLightbox] = useState(false);
   const [reviews, setReviews] = useState([]);
   const [reviewForm, setReviewForm] = useState({ name: "", rating: 0, comment: "" });
   const [reviewSending, setReviewSending] = useState(false);
@@ -2549,11 +2552,41 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
       </div>
 
       <div className="pdp-grid">
-        <div className="pdp-image-box">
-          {(matched?.photo || product.photo)
-            ? <><img src={matched?.photo || product.photo} alt={product.name} /><img src={LOGO_TARFIX} alt="" className="img-watermark" /></>
-            : <span className="emoji-fallback">{product.image}</span>}
+        <div>
+          {(() => {
+            const thumbs = [...new Set([product.photo, ...(product.gallery || []), matched?.photo].filter(Boolean))];
+            const mainImg = activeImg || matched?.photo || product.photo;
+            return (
+              <>
+                <div className="pdp-image-box" style={{ cursor: mainImg ? "zoom-in" : "default" }} onClick={() => mainImg && setLightbox(true)}>
+                  {mainImg
+                    ? <><img src={mainImg} alt={product.name} /><img src={LOGO_TARFIX} alt="" className="img-watermark" /></>
+                    : <span className="emoji-fallback">{product.image}</span>}
+                </div>
+                {thumbs.length > 1 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                    {thumbs.map((url, i) => {
+                      const active = (activeImg || matched?.photo || product.photo) === url;
+                      return (
+                        <button key={i} type="button" onClick={() => setActiveImg(url)}
+                          style={{ width: 64, height: 64, borderRadius: 8, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0, border: `2px solid ${active ? "var(--primary)" : "var(--border)"}` }}>
+                          <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
+
+        {lightbox && (activeImg || matched?.photo || product.photo) && (
+          <div onClick={() => setLightbox(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-out", padding: 20 }}>
+            <img src={activeImg || matched?.photo || product.photo} alt={product.name} style={{ maxWidth: "92vw", maxHeight: "92vh", objectFit: "contain", borderRadius: 8, background: "#fff" }} />
+            <button type="button" onClick={(e) => { e.stopPropagation(); setLightbox(false); }} style={{ position: "absolute", top: 18, right: 24, background: "rgba(255,255,255,.92)", border: "none", borderRadius: "50%", width: 42, height: 42, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+          </div>
+        )}
 
         <div>
           <h1 className="pdp-title">{product.name}</h1>
@@ -3616,12 +3649,13 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], priceNet: "" });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], gallery: [], priceNet: "" });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [docUploading, setDocUploading] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [galleryUploading, setGalleryUploading] = useState(false);
   const [variantPhotoUploading, setVariantPhotoUploading] = useState(null);
   const [tagInput, setTagInput] = useState("");
   const [bulkConfirm, setBulkConfirm] = useState(false);
@@ -3649,6 +3683,22 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     } finally { setPhotoUploading(false); }
   };
 
+  const handleGalleryUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setGalleryUploading(true);
+    try {
+      for (const file of files) {
+        if (!file.type.startsWith("image/")) { showAlert(`Pominięto ${file.name} — to nie obraz`, "danger"); continue; }
+        if (file.size > 5 * 1024 * 1024) { showAlert(`Pominięto ${file.name} — większy niż 5 MB`, "danger"); continue; }
+        const { url } = await api.uploadProductImage(file);
+        setForm(f => ({ ...f, gallery: [...(f.gallery || []), url] }));
+      }
+    } catch (err) {
+      showAlert("Nie udało się wgrać zdjęć: " + err.message, "danger");
+    } finally { setGalleryUploading(false); }
+  };
+
   const handleVariantPhotoUpload = async (variantId, file) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) return showAlert("Wybierz plik graficzny (JPG, PNG)", "danger");
@@ -3662,7 +3712,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     } finally { setVariantPhotoUploading(null); }
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], priceNet: "" }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], gallery: [], priceNet: "" }); setEditItem(null); setModal("product"); };
 
   const uploadDoc = async (file) => {
     if (!file) return;
@@ -3723,7 +3773,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? ""), photo: v.photo || "" })) : [];
     const gorder = (groups || []).map(g => g.name);
     vars.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; });
-    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], attributeGroups: groups, variants: vars });
+    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], gallery: Array.isArray(p.gallery) ? p.gallery : [], attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
   const save = async () => {
@@ -3780,6 +3830,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       published: !!form.published,
       documents: form.documents || [],
       tags: [...new Set((form.tags || []).map(t => String(t).trim()).filter(Boolean))],
+      gallery: (form.gallery || []).filter(Boolean),
     };
     try {
       if (editItem) {
@@ -3987,6 +4038,25 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                   </div>
                 </div>
               </div>
+              <div className="form-group">
+                <label className="form-label">🖼️ Galeria (dodatkowe zdjęcia)</label>
+                {(form.gallery || []).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                    {(form.gallery || []).map((url, gi) => (
+                      <div key={gi} style={{ position: "relative", width: 72, height: 72, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
+                        <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                        <button type="button" onClick={() => setForm(f => ({ ...f, gallery: (f.gallery || []).filter((_, j) => j !== gi) }))}
+                          style={{ position: "absolute", top: 2, right: 2, width: 20, height: 20, borderRadius: "50%", border: "none", background: "rgba(220,38,38,.9)", color: "#fff", cursor: "pointer", fontSize: 12, lineHeight: 1 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <label className="btn btn-secondary btn-sm" style={{ cursor: galleryUploading ? "wait" : "pointer", width: "fit-content", opacity: galleryUploading ? 0.6 : 1 }}>
+                  {galleryUploading ? "⏳ Wgrywanie…" : "➕ Dodaj zdjęcia do galerii"}
+                  <input type="file" accept="image/*" multiple style={{ display: "none" }} disabled={galleryUploading} onChange={handleGalleryUpload} />
+                </label>
+                <p className="text-sm text-muted" style={{ marginTop: 4 }}>Można wgrać kilka naraz. Na stronie produktu pojawią się jako miniatury pod zdjęciem głównym, z powiększeniem po kliknięciu.</p>
+              </div>
               <div className="form-group"><label className="form-label">Ikona (gdy brak zdjęcia)</label>
                 <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
                   {emojis.map(e => <button key={e} onClick={() => setForm(f => ({ ...f, image: e }))} style={{ fontSize: "1.4rem", padding: "5px 9px", borderRadius: 8, border: `2px solid ${form.image === e ? "var(--primary)" : "var(--border)"}`, background: form.image === e ? "var(--primary-light)" : "#fff", cursor: "pointer" }}>{e}</button>)}
@@ -4128,32 +4198,58 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                       const grps = (form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length);
                       const uv = (id, patch) => setForm(f => ({ ...f, variants: f.variants.map(x => x.id === id ? { ...x, ...patch } : x) }));
                       const rowsToRender = form.variants || []; // kolejność dodawania — bez sortowania na żywo (nie przeskakuje podczas edycji)
-                      return rowsToRender.map(v => (
-                        <div key={v.id} className="flex gap-2 items-center" style={{ marginBottom: 8, flexWrap: "wrap" }}>
-                          {grps.map(g => (
-                            <select key={g.id || g.name} className="form-select" style={{ flex: "1 1 110px", padding: "6px 8px" }} value={v.combo?.[g.name] || ""}
-                              onChange={e => uv(v.id, { combo: { ...v.combo, [g.name]: e.target.value } })}>
-                              <option value="">{g.name}…</option>
-                              {[...g.values].sort(naturalCompare).map(val => <option key={val} value={val}>{val}</option>)}
-                            </select>
-                          ))}
-                          <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena netto" value={v.price}
-                            onChange={e => { const val = e.target.value; uv(v.id, { price: val, priceGross: val === "" ? "" : String(grossOf(+val)) }); }} />
-                          <input className="form-input" style={{ flex: "1 1 70px" }} type="number" step="0.01" min="0" placeholder="Cena brutto" value={v.priceGross ?? ""}
-                            onChange={e => { const val = e.target.value; uv(v.id, { priceGross: val, price: val === "" ? "" : String(netOf(+val)) }); }} />
-                          <input className="form-input" style={{ flex: "1 1 70px" }} placeholder="SKU" value={v.sku}
-                            onChange={e => uv(v.id, { sku: e.target.value })} />
-                          <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="0.001" min="0" placeholder="Waga" value={v.weight}
-                            onChange={e => uv(v.id, { weight: e.target.value })} />
-                          <input className="form-input" style={{ flex: "1 1 60px" }} type="number" step="1" min="0" placeholder="Stan" value={v.stock}
-                            onChange={e => uv(v.id, { stock: e.target.value })} />
-                          {v.photo && <img src={v.photo} alt="" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 6, border: "1px solid var(--border)", background: "#fff" }} />}
-                          <label className="btn btn-secondary btn-sm" style={{ cursor: variantPhotoUploading === v.id ? "wait" : "pointer", opacity: variantPhotoUploading === v.id ? 0.6 : 1 }} title="Zdjęcie wariantu">
-                            {variantPhotoUploading === v.id ? "⏳" : (v.photo ? "🔄" : "📷")}
-                            <input type="file" accept="image/*" style={{ display: "none" }} disabled={variantPhotoUploading === v.id} onChange={e => handleVariantPhotoUpload(v.id, e.target.files[0])} />
-                          </label>
-                          {v.photo && <button type="button" className="btn btn-danger btn-sm" title="Usuń zdjęcie wariantu" onClick={() => uv(v.id, { photo: "" })}>🖼️✕</button>}
-                          <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, variants: f.variants.filter(x => x.id !== v.id) }))}>🗑️</button>
+                      const miniLabel = { fontSize: ".7rem", color: "#6b7280", display: "block", marginBottom: 3, fontWeight: 600 };
+                      return rowsToRender.map((v, vi) => (
+                        <div key={v.id} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, marginBottom: 10, background: "#fafafa" }}>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+                            <span style={{ fontWeight: 700, fontSize: ".85rem", color: "var(--primary)", alignSelf: "center", minWidth: 24 }}>#{vi + 1}</span>
+                            {grps.map(g => (
+                              <div key={g.id || g.name} style={{ flex: "1 1 130px" }}>
+                                <label style={miniLabel}>{g.name}</label>
+                                <select className="form-select" style={{ width: "100%", padding: "7px 8px" }} value={v.combo?.[g.name] || ""}
+                                  onChange={e => uv(v.id, { combo: { ...v.combo, [g.name]: e.target.value } })}>
+                                  <option value="">— wybierz —</option>
+                                  {[...g.values].sort(naturalCompare).map(val => <option key={val} value={val}>{val}</option>)}
+                                </select>
+                              </div>
+                            ))}
+                            <button type="button" className="btn btn-danger btn-sm" style={{ marginLeft: "auto" }} onClick={() => setForm(f => ({ ...f, variants: f.variants.filter(x => x.id !== v.id) }))}>🗑️ Usuń</button>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                            <div style={{ flex: "1 1 90px" }}>
+                              <label style={miniLabel}>Cena netto</label>
+                              <input className="form-input" style={{ width: "100%" }} type="number" step="0.01" min="0" value={v.price}
+                                onChange={e => { const val = e.target.value; uv(v.id, { price: val, priceGross: val === "" ? "" : String(grossOf(+val)) }); }} />
+                            </div>
+                            <div style={{ flex: "1 1 90px" }}>
+                              <label style={miniLabel}>Cena brutto</label>
+                              <input className="form-input" style={{ width: "100%" }} type="number" step="0.01" min="0" value={v.priceGross ?? ""}
+                                onChange={e => { const val = e.target.value; uv(v.id, { priceGross: val, price: val === "" ? "" : String(netOf(+val)) }); }} />
+                            </div>
+                            <div style={{ flex: "1 1 110px" }}>
+                              <label style={miniLabel}>SKU (indeks)</label>
+                              <input className="form-input" style={{ width: "100%" }} value={v.sku} onChange={e => uv(v.id, { sku: e.target.value })} />
+                            </div>
+                            <div style={{ flex: "1 1 70px" }}>
+                              <label style={miniLabel}>Waga (kg)</label>
+                              <input className="form-input" style={{ width: "100%" }} type="number" step="0.001" min="0" value={v.weight} onChange={e => uv(v.id, { weight: e.target.value })} />
+                            </div>
+                            <div style={{ flex: "1 1 70px" }}>
+                              <label style={miniLabel}>Stan mag.</label>
+                              <input className="form-input" style={{ width: "100%" }} type="number" step="1" min="0" value={v.stock} onChange={e => uv(v.id, { stock: e.target.value })} />
+                            </div>
+                            <div>
+                              <label style={miniLabel}>Zdjęcie</label>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                {v.photo && <img src={v.photo} alt="" style={{ width: 38, height: 38, objectFit: "contain", borderRadius: 6, border: "1px solid var(--border)", background: "#fff" }} />}
+                                <label className="btn btn-secondary btn-sm" style={{ cursor: variantPhotoUploading === v.id ? "wait" : "pointer", opacity: variantPhotoUploading === v.id ? 0.6 : 1 }} title="Zdjęcie wariantu">
+                                  {variantPhotoUploading === v.id ? "⏳" : (v.photo ? "🔄" : "📷")}
+                                  <input type="file" accept="image/*" style={{ display: "none" }} disabled={variantPhotoUploading === v.id} onChange={e => handleVariantPhotoUpload(v.id, e.target.files[0])} />
+                                </label>
+                                {v.photo && <button type="button" className="btn btn-danger btn-sm" title="Usuń zdjęcie wariantu" onClick={() => uv(v.id, { photo: "" })}>✕</button>}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       ));
                     })()}
