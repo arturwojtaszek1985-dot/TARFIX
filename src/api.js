@@ -167,6 +167,16 @@ export async function addProduct(product) {
   return data;
 }
 
+// Lekka aktualizacja stanu magazynowego (po złożeniu zamówienia).
+// Aktualizuje tylko przekazane pola (stock i/lub variants) — bez odczytu zwrotnego.
+export async function updateProductStock(id, fields) {
+  const { error } = await supabase
+    .from("products")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
 export async function updateProduct(id, product) {
   const { data, error } = await supabase
     .from("products")

@@ -652,6 +652,8 @@ export default function App() {
   const [contactInfo, setContactInfo] = useState({
     companyName: "TARFIX",
     address: "ul. Przykładowa 1, 00-001 Warszawa",
+    nip: "",
+    bankAccount: "",
     phone: "+48 123 456 789",
     email: "kontakt@tarfix.pl",
     hours: "Pon–Pt: 8:00–16:00",
@@ -1007,6 +1009,40 @@ export default function App() {
     setOrders(prev => [newOrder, ...prev]);
     setCart([]); setCartOpen(false); setPaymentOpen(false);
     showAlert(paymentStatus === "Opłacone" ? "Płatność zaakceptowana — zamówienie złożone!" : "Zamówienie złożone — płatność przy odbiorze!");
+
+    // Automatyczne zdjęcie stanu magazynowego po złożeniu zamówienia.
+    // Warianty: zmniejszamy stan konkretnego wariantu; stan produktu = suma wariantów.
+    // Produkt bez wariantów: zmniejszamy stan produktu. Nie schodzimy poniżej 0.
+    (async () => {
+      try {
+        const byProduct = {};
+        (newOrder.items || []).forEach(it => {
+          if (it.productId == null) return;
+          (byProduct[it.productId] = byProduct[it.productId] || []).push(it);
+        });
+        const localPatch = {};
+        for (const pid of Object.keys(byProduct)) {
+          const prod = products.find(p => String(p.id) === String(pid));
+          if (!prod) continue;
+          const lines = byProduct[pid];
+          if (Array.isArray(prod.variants) && prod.variants.length > 0) {
+            const newVariants = prod.variants.map(v => {
+              const line = lines.find(l => String(l.id).split("__")[1] === String(v.id));
+              return line ? { ...v, stock: Math.max(0, (Number(v.stock) || 0) - (Number(line.qty) || 0)) } : v;
+            });
+            const newStock = newVariants.reduce((s, v) => s + (Number(v.stock) || 0), 0);
+            localPatch[pid] = { variants: newVariants, stock: newStock };
+            try { await api.updateProductStock(prod.id, { variants: newVariants, stock: newStock }); } catch (e) { console.warn("Nie zdjęto stanu wariantu:", e.message); }
+          } else {
+            const sold = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+            const newStock = Math.max(0, (Number(prod.stock) || 0) - sold);
+            localPatch[pid] = { stock: newStock };
+            try { await api.updateProductStock(prod.id, { stock: newStock }); } catch (e) { console.warn("Nie zdjęto stanu produktu:", e.message); }
+          }
+        }
+        if (Object.keys(localPatch).length) setProducts(prev => prev.map(p => localPatch[p.id] ? { ...p, ...localPatch[p.id] } : p));
+      } catch (e) { console.warn("Aktualizacja stanów nie powiodła się:", e.message); }
+    })();
 
     // Automatyczne potwierdzenie e-mailem — wysyłane "w tle", nie blokuje
     // ani nie przerywa procesu składania zamówienia, jeśli się nie powiedzie
@@ -2761,6 +2797,12 @@ function ContactPage({ contactInfo, setContactInfo, isAdmin, showAlert }) {
             <input className="form-input" value={form.companyName} onChange={e => setForm(f => ({ ...f, companyName: e.target.value }))} /></div>
           <div className="form-group"><label className="form-label">Adres</label>
             <input className="form-input" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div>
+          <div className="flex gap-3">
+            <div className="form-group" style={{ flex: 1 }}><label className="form-label">NIP (do faktur)</label>
+              <input className="form-input" placeholder="np. 123-456-32-18" value={form.nip || ""} onChange={e => setForm(f => ({ ...f, nip: e.target.value }))} /></div>
+            <div className="form-group" style={{ flex: 2 }}><label className="form-label">Nr konta bankowego (do faktur)</label>
+              <input className="form-input" placeholder="PL00 0000 0000 0000 0000 0000 0000" value={form.bankAccount || ""} onChange={e => setForm(f => ({ ...f, bankAccount: e.target.value }))} /></div>
+          </div>
           <div className="flex gap-3">
             <div className="form-group" style={{ flex: 1 }}><label className="form-label">Telefon</label>
               <input className="form-input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
@@ -4856,6 +4898,139 @@ function generateOrderPDF(order, contactInfo, units) {
   doc.save(`zamowienie_${String(order.id).slice(-6)}.pdf`);
 }
 
+// Faktura VAT (PDF). Ceny pozycji koszyka są brutto → netto = brutto / 1,23.
+function generateInvoicePDF(order, contactInfo, units) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 16;
+  const rightX = pageWidth - marginX;
+  const money = (n) => (Math.round((+n || 0) * 100) / 100).toFixed(2).replace(".", ",");
+  const VAT = 0.23;
+  const unitOf = (u) => (units?.find(x => x.value === u)?.label || u || "szt.");
+  let y = 18;
+
+  // Numer faktury: FV/RRRR/MM/krótkie-id (z daty zamówienia)
+  const d = order.created_at ? new Date(order.created_at) : new Date();
+  const yyyy = d.getFullYear(), mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+  const invNo = `FV/${yyyy}/${mm}/${String(order.id).slice(-6)}`;
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+
+  doc.setFontSize(18); doc.setFont("helvetica", "bold");
+  doc.text(pdfText("FAKTURA"), marginX, y);
+  doc.setFontSize(10); doc.setFont("helvetica", "normal");
+  doc.text(pdfText(`Nr: ${invNo}`), rightX, y - 4, { align: "right" });
+  doc.text(pdfText(`Data wystawienia: ${dateStr}`), rightX, y + 1, { align: "right" });
+  doc.text(pdfText(`Data sprzedazy: ${dateStr}`), rightX, y + 6, { align: "right" });
+  y += 14;
+
+  // Sprzedawca / Nabywca (dwie kolumny)
+  const colR = pageWidth / 2 + 4;
+  doc.setFontSize(9); doc.setFont("helvetica", "bold");
+  doc.text(pdfText("Sprzedawca:"), marginX, y);
+  doc.text(pdfText("Nabywca:"), colR, y);
+  doc.setFont("helvetica", "normal");
+  let ys = y + 5, yn = y + 5;
+  const putL = (t) => { if (t) { doc.text(pdfText(t), marginX, ys); ys += 4.5; } };
+  const putR = (t) => { if (t) { doc.text(pdfText(t), colR, yn); yn += 4.5; } };
+  putL(contactInfo?.companyName || "TARFIX");
+  putL(contactInfo?.address);
+  if (contactInfo?.nip) putL(`NIP: ${contactInfo.nip}`);
+  if (contactInfo?.email) putL(`E-mail: ${contactInfo.email}`);
+  putR(order.deliveryCompany || order.deliveryName || order.user || "Klient");
+  if (order.deliveryCompany && order.deliveryName) putR(order.deliveryName);
+  putR(order.deliveryAddress);
+  if (order.deliveryNip) putR(`NIP: ${order.deliveryNip}`);
+  if (order.deliveryPhone) putR(`Tel: ${order.deliveryPhone}`);
+  y = Math.max(ys, yn) + 6;
+
+  // Adres wysyłki (gdy inny)
+  if (order.shipToDifferent && (order.shipToName || order.shipToAddress)) {
+    doc.setFont("helvetica", "bold"); doc.text(pdfText("Adres wysylki:"), marginX, y); doc.setFont("helvetica", "normal"); y += 5;
+    if (order.shipToName) { doc.text(pdfText(order.shipToName), marginX, y); y += 4.5; }
+    if (order.shipToAddress) { doc.text(pdfText(order.shipToAddress), marginX, y); y += 4.5; }
+    y += 3;
+  }
+
+  // Tabela pozycji
+  const cols = [
+    { t: "Lp", x: marginX, w: 8, a: "left" },
+    { t: "Nazwa", x: marginX + 8, w: 66, a: "left" },
+    { t: "Ilosc", x: marginX + 76, w: 14, a: "right" },
+    { t: "j.m.", x: marginX + 92, w: 12, a: "left" },
+    { t: "Cena netto", x: marginX + 108, w: 20, a: "right" },
+    { t: "VAT", x: marginX + 130, w: 12, a: "right" },
+    { t: "Wart. netto", x: marginX + 146, w: 20, a: "right" },
+    { t: "Wart. brutto", x: rightX, w: 22, a: "right" },
+  ];
+  doc.setFillColor(240, 245, 242); doc.rect(marginX, y - 4, rightX - marginX, 7, "F");
+  doc.setFontSize(8); doc.setFont("helvetica", "bold");
+  cols.forEach(c => doc.text(pdfText(c.t), c.a === "right" ? c.x + (c.t === "Wart. brutto" ? 0 : c.w) : c.x, y, { align: c.a }));
+  y += 6; doc.setFont("helvetica", "normal");
+
+  let sumNet = 0, sumGross = 0, lp = 0;
+  (order.items || []).forEach(it => {
+    const qty = Number(it.qty) || 0;
+    const gross = Number(it.price) || 0;      // brutto jednostkowe
+    const net = Math.round((gross / (1 + VAT)) * 100) / 100;
+    const lineNet = Math.round(net * qty * 100) / 100;
+    const lineGross = Math.round(gross * qty * 100) / 100;
+    sumNet += lineNet; sumGross += lineGross; lp += 1;
+    const name = doc.splitTextToSize(pdfText(it.name || ""), 64);
+    doc.text(String(lp), cols[0].x, y);
+    doc.text(name, cols[1].x, y);
+    doc.text(String(qty), cols[2].x + cols[2].w, y, { align: "right" });
+    doc.text(pdfText(unitOf(it.unit)), cols[3].x, y);
+    doc.text(money(net), cols[4].x + cols[4].w, y, { align: "right" });
+    doc.text("23%", cols[5].x + cols[5].w, y, { align: "right" });
+    doc.text(money(lineNet), cols[6].x + cols[6].w, y, { align: "right" });
+    doc.text(money(lineGross), rightX, y, { align: "right" });
+    y += Math.max(5, name.length * 4.2);
+    if (y > 250) { doc.addPage(); y = 20; }
+  });
+
+  // Dostawa jako pozycja (jeśli płatna)
+  if ((Number(order.shippingCost) || 0) > 0) {
+    const gross = Number(order.shippingCost) || 0;
+    const net = Math.round((gross / (1 + VAT)) * 100) / 100;
+    sumNet += net; sumGross += gross; lp += 1;
+    doc.text(String(lp), cols[0].x, y);
+    doc.text(pdfText(`Dostawa (${order.shipmentLabel || "wysylka"})`), cols[1].x, y);
+    doc.text("1", cols[2].x + cols[2].w, y, { align: "right" });
+    doc.text("usl.", cols[3].x, y);
+    doc.text(money(net), cols[4].x + cols[4].w, y, { align: "right" });
+    doc.text("23%", cols[5].x + cols[5].w, y, { align: "right" });
+    doc.text(money(net), cols[6].x + cols[6].w, y, { align: "right" });
+    doc.text(money(gross), rightX, y, { align: "right" });
+    y += 6;
+  }
+
+  // Podsumowanie
+  y += 2; doc.setDrawColor(200); doc.line(marginX, y, rightX, y); y += 6;
+  const vat = Math.round((sumGross - sumNet) * 100) / 100;
+  doc.setFontSize(9);
+  const sumRow = (label, val, bold) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.text(pdfText(label), rightX - 46, y, { align: "right" });
+    doc.text(pdfText(`${money(val)} zl`), rightX, y, { align: "right" });
+    y += 5.5;
+  };
+  sumRow("Razem netto:", sumNet);
+  sumRow("VAT 23%:", vat);
+  doc.setFontSize(11);
+  sumRow("Do zaplaty (brutto):", sumGross, true);
+  doc.setFontSize(9); doc.setFont("helvetica", "normal");
+
+  y += 4;
+  doc.text(pdfText(`Sposob platnosci: ${order.paymentMethod || "-"}`), marginX, y); y += 5;
+  if ((order.paymentTermDays || 0) > 0) { doc.text(pdfText(`Termin platnosci: ${order.paymentTermDays} dni`), marginX, y); y += 5; }
+  if (contactInfo?.bankAccount) { doc.text(pdfText(`Nr konta: ${contactInfo.bankAccount}`), marginX, y); y += 5; }
+
+  doc.setFontSize(8); doc.setTextColor(150);
+  doc.text(pdfText("Dokument wygenerowany automatycznie."), marginX, 288);
+
+  doc.save(`faktura_${invNo.replace(/\//g, "-")}.pdf`);
+}
+
 
 const ORDER_STATUSES = ["Przyjęte", "W realizacji", "Zrealizowane", "Anulowane"];
 const statusBadgeClass = (s) =>
@@ -4928,6 +5103,7 @@ function OrdersPage({ orders, setOrders, isAdmin, units, contactInfo, showAlert 
               {o.shipmentLabel && <span className="badge badge-gray">{o.shipmentType === "packages" ? "📦" : "🪵"} {o.shipmentLabel}</span>}
               <span className={`badge ${statusBadgeClass(o.status)}`}>{o.status}</span>
               <button className="btn btn-secondary btn-sm ml-auto" onClick={() => generateOrderPDF(o, contactInfo, units)}>📄 PDF</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => generateInvoicePDF(o, contactInfo, units)}>🧾 Faktura</button>
             </div>
 
             {isAdmin && (
