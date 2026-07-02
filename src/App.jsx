@@ -940,6 +940,7 @@ export default function App() {
       price: unitPrice, regularPrice: isVar ? variant.price : p.price, promoActive: promo,
       weight: isVar ? (+variant.weight || 0) : (p.weight || 0), sku: isVar ? (variant.sku || p.sku) : p.sku,
       optionName: isVar ? (variant.name || "") : "",
+      qtyTiers: isVar ? ((variant.qtyTiers && variant.qtyTiers.length) ? variant.qtyTiers : (p.qtyTiers || [])) : (p.qtyTiers || []),
     };
     setCart(prev => {
       const ex = prev.find(i => i.id === lineId);
@@ -2662,7 +2663,7 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
                 <span className="text-sm text-muted">{unitLabel}</span>
               </div>
               <button className="btn btn-primary" style={{ marginTop: 12, padding: "12px 28px", fontSize: "1rem" }} disabled={!matched || (matched.stock || 0) <= 0}
-                onClick={() => { onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: grossOf(matched.price), sku: matched.sku, weight: matched.weight }, qty); setQty(1); }}>
+                onClick={() => { onAdd(product, { id: matched.id, name: comboLabel(matched.combo), price: grossOf(matched.price), sku: matched.sku, weight: matched.weight, qtyTiers: matched.qtyTiers }, qty); setQty(1); }}>
                 {!allSelected ? "Wybierz opcje powyżej" : !matched ? "Kombinacja niedostępna" : (matched.stock || 0) <= 0 ? "Brak w magazynie" : "🛒 Dodaj do koszyka"}
               </button>
             </>
@@ -2706,19 +2707,23 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
             </>
           )}
 
-          {Array.isArray(product.qtyTiers) && product.qtyTiers.length > 0 && (
-            <div style={{ marginTop: 14, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", background: "#f0fdf4" }}>
-              <div style={{ fontWeight: 700, fontSize: ".85rem", marginBottom: 6 }}>💰 Rabaty ilościowe — kup więcej, zapłać mniej</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {[...product.qtyTiers].sort((a, b) => (+a.minQty) - (+b.minQty)).map((t, i) => (
-                  <span key={i} className="badge badge-green" style={{ fontSize: ".8rem" }}>od {t.minQty} szt. → −{t.discountPct}%</span>
-                ))}
+          {(() => {
+            const activeTiers = (matched?.qtyTiers && matched.qtyTiers.length) ? matched.qtyTiers : (product.qtyTiers || []);
+            if (!Array.isArray(activeTiers) || activeTiers.length === 0) return null;
+            return (
+              <div style={{ marginTop: 14, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", background: "#f0fdf4" }}>
+                <div style={{ fontWeight: 700, fontSize: ".85rem", marginBottom: 6 }}>💰 Rabaty ilościowe — kup więcej, zapłać mniej{matched?.qtyTiers && matched.qtyTiers.length ? " (dla tego wariantu)" : ""}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {[...activeTiers].sort((a, b) => (+a.minQty) - (+b.minQty)).map((t, i) => (
+                    <span key={i} className="badge badge-green" style={{ fontSize: ".8rem" }}>od {t.minQty} szt. → −{t.discountPct}%</span>
+                  ))}
+                </div>
+                {qtyDiscountPct(activeTiers, qty) > 0 && (
+                  <div className="text-sm" style={{ color: "var(--primary)", fontWeight: 700, marginTop: 6 }}>✓ Przy {qty} szt. masz −{qtyDiscountPct(activeTiers, qty)}% od ceny jednostkowej</div>
+                )}
               </div>
-              {qtyDiscountPct(product.qtyTiers, qty) > 0 && (
-                <div className="text-sm" style={{ color: "var(--primary)", fontWeight: 700, marginTop: 6 }}>✓ Przy {qty} szt. masz −{qtyDiscountPct(product.qtyTiers, qty)}% od ceny jednostkowej</div>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {product.longDescription && (
             <>
@@ -3800,7 +3805,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
   };
   const openEdit = (p) => {
     const groups = Array.isArray(p.attributeGroups) ? p.attributeGroups.map(g => ({ id: g.id || `g_${Math.random().toString(36).slice(2)}`, name: g.name || "", values: [...(g.values || [])] })) : [];
-    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? ""), photo: v.photo || "" })) : [];
+    const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? ""), photo: v.photo || "", qtyTiers: Array.isArray(v.qtyTiers) ? v.qtyTiers : [] })) : [];
     const gorder = (groups || []).map(g => g.name);
     vars.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; });
     setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], gallery: Array.isArray(p.gallery) ? p.gallery : [], qtyTiers: Array.isArray(p.qtyTiers) ? p.qtyTiers : [], attributeGroups: groups, variants: vars });
@@ -3826,7 +3831,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
           combo[g.name] = val;
         }
         if (price <= 0) return showAlert(`Wariant ${i + 1}: cena netto musi być większa od 0`, "danger");
-        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0, stock: +v.stock || 0, photo: v.photo || "" });
+        cleanVariants.push({ id: v.id || `v_${Date.now()}_${i}`, combo, price, sku: v.sku || "", weight: +v.weight || 0, stock: +v.stock || 0, photo: v.photo || "", qtyTiers: (v.qtyTiers || []).map(t => ({ minQty: +t.minQty || 0, discountPct: +t.discountPct || 0 })).filter(t => t.minQty > 0 && t.discountPct > 0) });
       }
     }
     // Zapisujemy warianty w kolejności posortowanej (naturalnie wg wartości) — spójnie ze sklepem.
@@ -4241,7 +4246,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                   <div style={{ marginTop: 10 }}>
                     <div className="flex items-center" style={{ justifyContent: "space-between", marginBottom: 6 }}>
                       <label className="form-label" style={{ marginBottom: 0, fontWeight: 600 }}>Warianty (kombinacje z ceną)</label>
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: `v_${Date.now()}`, combo: {}, price: "", priceGross: "", sku: "", weight: "", stock: "" }] }))}>+ Dodaj wariant</button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, variants: [...(f.variants || []), { id: `v_${Date.now()}`, combo: {}, price: "", priceGross: "", sku: "", weight: "", stock: "", qtyTiers: [] }] }))}>+ Dodaj wariant</button>
                     </div>
                     {(() => {
                       const grps = (form.attributeGroups || []).filter(g => (g.name || "").trim() && (g.values || []).length);
@@ -4298,6 +4303,22 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                                 {v.photo && <button type="button" className="btn btn-danger btn-sm" title="Usuń zdjęcie wariantu" onClick={() => uv(v.id, { photo: "" })}>✕</button>}
                               </div>
                             </div>
+                          </div>
+                          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border)" }}>
+                            <label style={{ ...miniLabel, marginBottom: 6 }}>💰 Rabaty ilościowe wariantu {(v.qtyTiers || []).length === 0 && <span style={{ fontWeight: 400 }}>(puste = użyje progów produktu)</span>}</label>
+                            {(v.qtyTiers || []).map((t, ti) => (
+                              <div key={ti} className="flex gap-2 items-center" style={{ marginBottom: 5 }}>
+                                <span className="text-sm text-muted">od</span>
+                                <input className="form-input" type="number" min="1" step="1" style={{ width: 80 }} placeholder="ilość" value={t.minQty}
+                                  onChange={e => uv(v.id, { qtyTiers: (v.qtyTiers || []).map((x, j) => j === ti ? { ...x, minQty: e.target.value } : x) })} />
+                                <span className="text-sm text-muted">szt. →</span>
+                                <input className="form-input" type="number" min="1" max="100" step="1" style={{ width: 70 }} placeholder="%" value={t.discountPct}
+                                  onChange={e => uv(v.id, { qtyTiers: (v.qtyTiers || []).map((x, j) => j === ti ? { ...x, discountPct: e.target.value } : x) })} />
+                                <span className="text-sm text-muted">% taniej</span>
+                                <button type="button" className="btn btn-danger btn-sm" onClick={() => uv(v.id, { qtyTiers: (v.qtyTiers || []).filter((_, j) => j !== ti) })}>🗑️</button>
+                              </div>
+                            ))}
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => uv(v.id, { qtyTiers: [...(v.qtyTiers || []), { minQty: "", discountPct: "" }] })}>+ Próg dla tego wariantu</button>
                           </div>
                         </div>
                       ));
