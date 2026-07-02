@@ -239,6 +239,14 @@ const matchesParams = (p, paramFilters) => {
 const VAT_RATE = 0.23;
 const grossOf = (net) => Math.round((+net || 0) * (1 + VAT_RATE) * 100) / 100;
 const netOf = (gross) => Math.round((+gross || 0) / (1 + VAT_RATE) * 100) / 100;
+// Rabaty ilościowe: % zniżki = próg o najwyższym minQty, który spełnia ilość.
+const qtyDiscountPct = (tiers, qty) => {
+  if (!Array.isArray(tiers)) return 0;
+  const ok = tiers.filter(t => (+t.minQty || 0) > 0 && qty >= (+t.minQty || 0)).sort((a, b) => (+b.minQty) - (+a.minQty));
+  return ok.length ? (+ok[0].discountPct || 0) : 0;
+};
+// Cena jednostkowa po rabacie ilościowym (na bazie ceny brutto/jednostkowej).
+const tierUnitPrice = (base, tiers, qty) => Math.round((+base || 0) * (1 - qtyDiscountPct(tiers, qty) / 100) * 100) / 100;
 
 // ── ADRESY URL PRODUKTÓW (routing przez History API) ────────────────────────
 const slugify = (s) => (s || "")
@@ -701,6 +709,7 @@ export default function App() {
             documents: Array.isArray(p.documents) ? p.documents : [],
             tags: Array.isArray(p.tags) ? p.tags : [],
             gallery: Array.isArray(p.gallery) ? p.gallery : [],
+            qtyTiers: Array.isArray(p.qty_tiers) ? p.qty_tiers : [],
             attributeGroups: Array.isArray(p.attribute_groups) ? p.attribute_groups : [],
             variants: Array.isArray(p.variants) ? p.variants.map(v => ({
               id: v.id || String(Math.random()).slice(2),
@@ -906,6 +915,7 @@ export default function App() {
           shipToName: o.ship_to_name,
           shipToAddress: o.ship_to_address,
           shipToPhone: o.ship_to_phone,
+          invoiceNo: o.invoice_no || null,
           paymentTermDays: o.payment_term_days || 0,
         }));
         setOrders(mapped);
@@ -942,7 +952,7 @@ export default function App() {
   const updateQty = (id, delta) =>
     setCart(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + delta) } : i).filter(i => i.qty > 0));
 
-  const cartSub = cart.reduce((s, i) => s + i.price * i.qty, 0);
+  const cartSub = cart.reduce((s, i) => s + tierUnitPrice(i.price, i.qtyTiers, i.qty) * i.qty, 0);
   const cartDisc = cartSub * (discount / 100);
   const cartAfterDiscount = cartSub - cartDisc;
   const cartWeight = cart.reduce((s, i) => s + (i.weight || 0) * i.qty, 0);
@@ -960,7 +970,7 @@ export default function App() {
     const newOrder = {
       id: Date.now(), user: currentUser.name, userId: isGuest ? null : currentUser.id,
       guestEmail: guestInfo?.email || null,
-      items: [...cart], subtotal: cartSub, discount, discountAmt: cartDisc,
+      items: cart.map(i => ({ ...i, price: tierUnitPrice(i.price, i.qtyTiers, i.qty) })), subtotal: cartSub, discount, discountAmt: cartDisc,
       shipmentType: selectedMethod?.id || "", shipmentLabel: selectedMethod?.name || "Dostawa", shippingCost, freeShipping,
       total: cartTotal, date: new Date().toLocaleDateString("pl-PL"),
       status: "Przyjęte", paymentMethod, paymentStatus,
@@ -1175,7 +1185,13 @@ export default function App() {
                 <span className="cart-item-emoji">{item.photo ? <img src={item.photo} alt={item.name} className="cart-item-photo" /> : item.image}</span>
                 <div className="cart-item-info">
                   <div className="cart-item-name">{item.name}</div>
-                  <div className="cart-item-price">{fmt(item.price)} / szt.</div>
+                  {(() => {
+                    const pct = qtyDiscountPct(item.qtyTiers, item.qty);
+                    const eff = tierUnitPrice(item.price, item.qtyTiers, item.qty);
+                    return pct > 0
+                      ? <div className="cart-item-price"><span style={{ textDecoration: "line-through", color: "var(--text-muted)" }}>{fmt(item.price)}</span> <strong style={{ color: "var(--primary)" }}>{fmt(eff)}</strong> / szt. <span className="badge badge-green" style={{ fontSize: ".68rem" }}>−{pct}%</span></div>
+                      : <div className="cart-item-price">{fmt(item.price)} / szt.</div>;
+                  })()}
                   <div className="cart-qty">
                     <button className="qty-btn" onClick={() => updateQty(item.id, -1)}>−</button>
                     <span className="qty-val">{item.qty}</span>
@@ -1183,7 +1199,7 @@ export default function App() {
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div className="font-bold" style={{ color: "var(--primary)", fontSize: ".9rem" }}>{fmt(item.price * item.qty)}</div>
+                  <div className="font-bold" style={{ color: "var(--primary)", fontSize: ".9rem" }}>{fmt(tierUnitPrice(item.price, item.qtyTiers, item.qty) * item.qty)}</div>
                 </div>
               </div>
             ))}
@@ -2690,6 +2706,20 @@ function ProductDetailPage({ product, units, discount, onAdd, onBack, omnibusFlo
             </>
           )}
 
+          {Array.isArray(product.qtyTiers) && product.qtyTiers.length > 0 && (
+            <div style={{ marginTop: 14, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", background: "#f0fdf4" }}>
+              <div style={{ fontWeight: 700, fontSize: ".85rem", marginBottom: 6 }}>💰 Rabaty ilościowe — kup więcej, zapłać mniej</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {[...product.qtyTiers].sort((a, b) => (+a.minQty) - (+b.minQty)).map((t, i) => (
+                  <span key={i} className="badge badge-green" style={{ fontSize: ".8rem" }}>od {t.minQty} szt. → −{t.discountPct}%</span>
+                ))}
+              </div>
+              {qtyDiscountPct(product.qtyTiers, qty) > 0 && (
+                <div className="text-sm" style={{ color: "var(--primary)", fontWeight: 700, marginTop: 6 }}>✓ Przy {qty} szt. masz −{qtyDiscountPct(product.qtyTiers, qty)}% od ceny jednostkowej</div>
+              )}
+            </div>
+          )}
+
           {product.longDescription && (
             <>
               <h2 className="pdp-section-title">Opis produktu</h2>
@@ -3649,7 +3679,7 @@ function SubcatTreeNode({ node, catName, depth, products, newSub, setNewSub, add
 }
 
 function AdminProducts({ products, setProducts, categories, setCategories, units, setUnits, showAlert, modal, setModal, editItem, setEditItem }) {
-  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], gallery: [], priceNet: "" });
+  const [form, setForm] = useState({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], gallery: [], qtyTiers: [], priceNet: "" });
   const [newCat, setNewCat] = useState("");
   const [delTarget, setDelTarget] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -3712,7 +3742,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     } finally { setVariantPhotoUploading(null); }
   };
 
-  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], gallery: [], priceNet: "" }); setEditItem(null); setModal("product"); };
+  const openAdd = () => { setForm({ name: "", category: categories[0]?.name || "", subcategory: "", price: "", promoPrice: "", stock: "", weight: "", unit: "szt", image: "📦", photo: "", description: "", longDescription: "", specs: [], sku: "", attributeGroups: [], variants: [], published: false, documents: [], tags: [], gallery: [], qtyTiers: [], priceNet: "" }); setEditItem(null); setModal("product"); };
 
   const uploadDoc = async (file) => {
     if (!file) return;
@@ -3773,7 +3803,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
     const vars = Array.isArray(p.variants) ? p.variants.map(v => ({ id: v.id, combo: { ...(v.combo || {}) }, price: String(v.price ?? ""), priceGross: v.price != null && v.price !== "" ? String(grossOf(+v.price)) : "", sku: v.sku || "", weight: String(v.weight ?? ""), stock: String(v.stock ?? ""), photo: v.photo || "" })) : [];
     const gorder = (groups || []).map(g => g.name);
     vars.sort((a, b) => { for (const gn of gorder) { const c = naturalCompare(a.combo?.[gn] || "", b.combo?.[gn] || ""); if (c !== 0) return c; } return 0; });
-    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], gallery: Array.isArray(p.gallery) ? p.gallery : [], attributeGroups: groups, variants: vars });
+    setForm({ ...p, subcategory: p.subcategory || "", price: String(p.price), priceNet: p.price != null ? String(netOf(p.price)) : "", promoPrice: p.promoPrice != null ? String(p.promoPrice) : "", stock: String(p.stock), weight: String(p.weight || ""), unit: p.unit || "szt", photo: p.photo || "", longDescription: p.longDescription || "", specs: p.specs || [], tags: Array.isArray(p.tags) ? p.tags : [], gallery: Array.isArray(p.gallery) ? p.gallery : [], qtyTiers: Array.isArray(p.qtyTiers) ? p.qtyTiers : [], attributeGroups: groups, variants: vars });
     setEditItem(p); setModal("product");
   };
   const save = async () => {
@@ -3831,6 +3861,7 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
       documents: form.documents || [],
       tags: [...new Set((form.tags || []).map(t => String(t).trim()).filter(Boolean))],
       gallery: (form.gallery || []).filter(Boolean),
+      qty_tiers: (form.qtyTiers || []).map(t => ({ minQty: +t.minQty || 0, discountPct: +t.discountPct || 0 })).filter(t => t.minQty > 0 && t.discountPct > 0),
     };
     try {
       if (editItem) {
@@ -4108,6 +4139,24 @@ function AdminProducts({ products, setProducts, categories, setCategories, units
                     }
                   }} />
                 <p className="text-sm text-muted" style={{ marginTop: 4 }}>Słowa kluczowe pod wyszukiwarkę i pozycjonowanie — synonimy, zastosowania, normy (np. „ETA", „DIN 7504"). Widoczne na stronie produktu i uwzględniane w danych strukturalnych.</p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">💰 Rabaty ilościowe (progi cenowe)</label>
+                {(form.qtyTiers || []).map((t, ti) => (
+                  <div key={ti} className="flex gap-2 items-center" style={{ marginBottom: 6 }}>
+                    <span className="text-sm text-muted">od</span>
+                    <input className="form-input" type="number" min="1" step="1" style={{ width: 90 }} placeholder="ilość" value={t.minQty}
+                      onChange={e => setForm(f => ({ ...f, qtyTiers: f.qtyTiers.map((x, j) => j === ti ? { ...x, minQty: e.target.value } : x) }))} />
+                    <span className="text-sm text-muted">szt. →</span>
+                    <input className="form-input" type="number" min="1" max="100" step="1" style={{ width: 80 }} placeholder="%" value={t.discountPct}
+                      onChange={e => setForm(f => ({ ...f, qtyTiers: f.qtyTiers.map((x, j) => j === ti ? { ...x, discountPct: e.target.value } : x) }))} />
+                    <span className="text-sm text-muted">% taniej</span>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => setForm(f => ({ ...f, qtyTiers: f.qtyTiers.filter((_, j) => j !== ti) }))}>🗑️</button>
+                  </div>
+                ))}
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, qtyTiers: [...(f.qtyTiers || []), { minQty: "", discountPct: "" }] }))}>+ Dodaj próg</button>
+                <p className="text-sm text-muted" style={{ marginTop: 4 }}>Np. „od 100 szt. → 5% taniej". Rabat liczony od ceny jednostkowej (działa też dla wariantów). Klient widzi tabelę progów i cenę po rabacie w koszyku.</p>
               </div>
 
               <div className="form-group">
@@ -5019,7 +5068,7 @@ function generateOrderPDF(order, contactInfo, units) {
 }
 
 // Faktura VAT (PDF). Ceny pozycji koszyka są brutto → netto = brutto / 1,23.
-function generateInvoicePDF(order, contactInfo, units) {
+function generateInvoicePDF(order, contactInfo, units, invoiceNo) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const marginX = 16;
@@ -5029,10 +5078,10 @@ function generateInvoicePDF(order, contactInfo, units) {
   const unitOf = (u) => (units?.find(x => x.value === u)?.label || u || "szt.");
   let y = 18;
 
-  // Numer faktury: FV/RRRR/MM/krótkie-id (z daty zamówienia)
+  // Numer faktury: użyj nadanego (stała numeracja), inaczej awaryjnie z daty/id
   const d = order.created_at ? new Date(order.created_at) : new Date();
   const yyyy = d.getFullYear(), mm = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
-  const invNo = `FV/${yyyy}/${mm}/${String(order.id).slice(-6)}`;
+  const invNo = invoiceNo || order.invoiceNo || `FV/${yyyy}/${mm}/${String(order.id).slice(-6)}`;
   const dateStr = `${yyyy}-${mm}-${dd}`;
 
   doc.setFontSize(18); doc.setFont("helvetica", "bold");
@@ -5163,6 +5212,19 @@ function OrdersPage({ orders, setOrders, isAdmin, units, contactInfo, showAlert 
   const [filter, setFilter] = useState("active"); // active | done | cancelled | all
   const [updatingId, setUpdatingId] = useState(null);
 
+  const handleInvoice = async (o) => {
+    // Numer nadajemy raz i zapisujemy na zamówieniu — kolejne pobrania mają ten sam numer.
+    if (o.invoiceNo) { generateInvoicePDF(o, contactInfo, units, o.invoiceNo); return; }
+    try {
+      const invoiceNo = await api.nextInvoiceNumber();
+      try { await api.updateOrderInvoiceNo(o.id, invoiceNo); } catch (e) { console.warn("Nie zapisano numeru faktury w bazie:", e.message); }
+      setOrders(prev => prev.map(x => x.id === o.id ? { ...x, invoiceNo } : x));
+      generateInvoicePDF({ ...o, invoiceNo }, contactInfo, units, invoiceNo);
+    } catch (err) {
+      showAlert("Nie udało się nadać numeru faktury: " + err.message, "danger");
+    }
+  };
+
   const changeStatus = async (orderId, status) => {
     setUpdatingId(orderId);
     try {
@@ -5223,7 +5285,7 @@ function OrdersPage({ orders, setOrders, isAdmin, units, contactInfo, showAlert 
               {o.shipmentLabel && <span className="badge badge-gray">{o.shipmentType === "packages" ? "📦" : "🪵"} {o.shipmentLabel}</span>}
               <span className={`badge ${statusBadgeClass(o.status)}`}>{o.status}</span>
               <button className="btn btn-secondary btn-sm ml-auto" onClick={() => generateOrderPDF(o, contactInfo, units)}>📄 PDF</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => generateInvoicePDF(o, contactInfo, units)}>🧾 Faktura</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => handleInvoice(o)}>🧾 {o.invoiceNo ? `Faktura ${o.invoiceNo}` : "Faktura"}</button>
             </div>
 
             {isAdmin && (

@@ -299,6 +299,24 @@ export async function updateOrderStatus(orderId, status) {
   if (error) throw error;
 }
 
+export async function updateOrderInvoiceNo(orderId, invoiceNo) {
+  const { error } = await supabase.from("orders").update({ invoice_no: invoiceNo }).eq("id", orderId);
+  if (error) throw error;
+}
+
+// Rezerwuje kolejny numer faktury (licznik roczny w settings: invoice_counter = {year, next}).
+// Zwraca sformatowany numer FV/<nr>/<rok>. Reset numeracji przy zmianie roku.
+export async function nextInvoiceNumber() {
+  const year = new Date().getFullYear();
+  let counter = null;
+  try { counter = await fetchSetting("invoice_counter"); } catch { counter = null; }
+  let next = 1;
+  if (counter && counter.year === year && Number.isFinite(+counter.next)) next = +counter.next;
+  const invoiceNo = `FV/${next}/${year}`;
+  await saveSetting("invoice_counter", { year, next: next + 1 });
+  return invoiceNo;
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // USTAWIENIA SKLEPU (np. dane kontaktowe) — przechowywane jako pary klucz/wartość
 // ════════════════════════════════════════════════════════════════════════
